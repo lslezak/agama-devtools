@@ -28,3 +28,8 @@ certificate.
 When testing with curl you need to either disable the SSL checks with the
 `--insecure` option or specify the SSL certificate to use with the `--cacert
 cert.pem` option.
+
+## Debugging
+
+Some SSL debugging hints are described in [this YaST
+documentation](https://github.com/yast/yast-registration/wiki/OpenSSL-Debugging-Hints).
