@@ -25,6 +25,16 @@ After starting a script you can connect to https://localhost:4433. Expect an
 error reported by browser or download tools because of the self signed
 certificate.
 
+If you just need to test the SSL connection itself you can also run this
+command:
+
+```sh
+openssl s_server -key key.pem -cert cert.pem -accept 4433 -www
+```
+
+This will run a web server which returns an HTML page with the SSL connection
+details.
+
 When testing with curl you need to either disable the SSL checks with the
 `--insecure` option or specify the SSL certificate to use with the `--cacert
 cert.pem` option.
