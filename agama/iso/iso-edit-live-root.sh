@@ -37,6 +37,10 @@ success() {
 # --- Configuration ---
 SQUASHFS_IMG_PATH_IN_ISO="/LiveOS/squashfs.img"
 ROOTFS_IMG_PATH_IN_SQUASHFS="/LiveOS/rootfs.img"
+GRUB_CFG_PATH_IN_ISO="/boot/grub2/grub.cfg"
+
+# Use the EDITOR environment variable, or default to 'vim'.
+EDITOR="${EDITOR:-vim}"
 
 # --- Functions ---
 
@@ -55,6 +59,10 @@ usage() {
 	echo "  --rebuild           Rebuild the rootfs ext4 image from scratch to remove deleted data."
 	echo "  --size <size>       Create a new rootfs image of <size> (e.g., 4G)."
 	echo "                      This option implies --rebuild."
+	echo "  --grub-append <opts> Append kernel options to 'Install' menu entries in grub.cfg."
+	echo "  --grub-extract [path] Extract grub.cfg to [path] (default: ./grub.cfg) and exit."
+	echo "  --grub-update <file> Update grub.cfg from a local file."
+	echo "  --grub-interactive  Interactively edit grub.cfg."
 	echo "  --output <file>     Specify the output ISO file name."
 	echo "                      Default: <iso_file>-edited.iso"
 	echo "Requires root privileges to perform mount operations."
@@ -139,6 +147,10 @@ REBUILD_ROOTFS=false
 ORIG_ROOTFS_MOUNT_POINT=""
 NEW_ROOTFS_SIZE=""
 COPIED_RESOLV_CONF_CHECKSUM=""
+GRUB_APPEND_OPTS=""
+GRUB_UPDATE_FILE=""
+GRUB_INTERACTIVE=false
+GRUB_EXTRACT_PATH=""
 POSITIONAL_ARGS=()
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -193,6 +205,36 @@ while [[ $# -gt 0 ]]; do
 		REBUILD_ROOTFS=true
 		shift 2
 		;;
+	--grub-append)
+		if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+			error "--grub-append requires an options string."
+			usage
+		fi
+		GRUB_APPEND_OPTS="$2"
+		shift 2
+		;;
+	--grub-extract)
+		# handle optional path
+		if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
+			GRUB_EXTRACT_PATH="$2"
+			shift
+		else
+			GRUB_EXTRACT_PATH="grub.cfg"
+		fi
+		shift
+		;;
+	--grub-update)
+		if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+			error "--grub-update requires a source file."
+			usage
+		fi
+		GRUB_UPDATE_FILE="$2"
+		shift 2
+		;;
+	--grub-interactive)
+		GRUB_INTERACTIVE=true
+		shift
+		;;
 	-*)
 		error "Unknown option: $1"
 		usage
@@ -213,6 +255,21 @@ ISO_FILE="${POSITIONAL_ARGS[0]}"
 if [[ ! -f "$ISO_FILE" ]]; then
 	error "ISO file not found $ISO_FILE"
 	exit 1
+fi
+
+# Handle grub-extract as an exclusive action
+if [[ -n "$GRUB_EXTRACT_PATH" ]]; then
+	if [[ ${#COPY_OPS[@]} -gt 0 || -n "$RUN_COMMAND" || "$INTERACTIVE_SHELL" == "true" || -n "$GRUB_APPEND_OPTS" || -n "$GRUB_UPDATE_FILE" || "$GRUB_INTERACTIVE" == "true" || "$REBUILD_ROOTFS" == "true" ]]; then
+		error "--grub-extract cannot be combined with other modification options."
+		exit 1
+	fi
+	info "Extracting ${GRUB_CFG_PATH_IN_ISO} to ${GRUB_EXTRACT_PATH}..."
+	if ! xorriso -osirrox on -indev "${ISO_FILE}" -extract "${GRUB_CFG_PATH_IN_ISO}" "${GRUB_EXTRACT_PATH}" &>/dev/null; then
+		error "Failed to extract ${GRUB_CFG_PATH_IN_ISO}. Please check if the path is correct for your ISO file."
+		exit 1
+	fi
+	success "Successfully extracted ${GRUB_CFG_PATH_IN_ISO} to ${GRUB_EXTRACT_PATH}"
+	exit 0
 fi
 
 if [[ $EUID -ne 0 ]]; then
@@ -348,8 +405,13 @@ if [[ -n "$RUN_COMMAND" ]]; then
 	fi
 fi
 
-if [[ "$INTERACTIVE_SHELL" == "true" || (${#COPY_OPS[@]} -eq 0 && -z "$RUN_COMMAND") ]]; then
-	# Enter interactive shell if --interactive is used, or if no --copy ops were given
+# Determine if default action (interactive rootfs edit) is needed
+DEFAULT_ACTION=false
+if [[ ${#COPY_OPS[@]} -eq 0 && -z "$RUN_COMMAND" && "$INTERACTIVE_SHELL" == "false" && -z "$GRUB_APPEND_OPTS" && -z "$GRUB_UPDATE_FILE" && "$GRUB_INTERACTIVE" == "false" ]]; then
+	DEFAULT_ACTION=true
+fi
+
+if [[ "$INTERACTIVE_SHELL" == "true" || "$DEFAULT_ACTION" == "true" ]]; then
 	setup_chroot_env
 
 	echo
@@ -371,22 +433,68 @@ if [[ "$INTERACTIVE_SHELL" == "true" || (${#COPY_OPS[@]} -eq 0 && -z "$RUN_COMMA
 	fi
 fi
 
+DO_ROOTFS_ACTIONS=false
+if [[ ${#COPY_OPS[@]} -gt 0 || -n "$RUN_COMMAND" || "$INTERACTIVE_SHELL" == "true" || "$DEFAULT_ACTION" == "true" ]]; then
+	DO_ROOTFS_ACTIONS=true
+fi
+
+DO_GRUB_ACTIONS=false
+if [[ -n "$GRUB_APPEND_OPTS" || -n "$GRUB_UPDATE_FILE" || "$GRUB_INTERACTIVE" == "true" ]]; then
+	DO_GRUB_ACTIONS=true
+fi
+
 # Repackage if any action was performed and succeeded.
-if [[ ${#COPY_OPS[@]} -gt 0 || -n "$RUN_COMMAND" || "$INTERACTIVE_SHELL" == "true" || (${#COPY_OPS[@]} -eq 0 && -z "$RUN_COMMAND") ]]; then
+if [[ "$DO_ROOTFS_ACTIONS" == "true" || "$DO_GRUB_ACTIONS" == "true" ]]; then
 	success "Changes succeeded, creating a new ISO..."
 
-	info "Unmounting rootfs image to save changes..."
-	umount "${ROOTFS_MOUNT_POINT}"
+	XORRISO_ARGS=("-indev" "${ISO_FILE}" "-outdev" "${NEW_ISO_FILENAME}")
 
-	NEW_SQUASHFS_IMG="${WORK_DIR}/new_squashfs.img"
-	info "Creating new squashfs image..."
-	# use the same parameters as Kiwi in OBS
-	mksquashfs "${SQUASHFS_CONTENT_DIR}" "${NEW_SQUASHFS_IMG}" -noappend -b 1M -comp xz -Xbcj x86 &>/dev/null
+	if [[ "$DO_ROOTFS_ACTIONS" == "true" ]]; then
+		info "Unmounting rootfs image to save changes..."
+		umount "${ROOTFS_MOUNT_POINT}"
+
+		NEW_SQUASHFS_IMG="${WORK_DIR}/new_squashfs.img"
+		info "Creating new squashfs image..."
+		# use the same parameters as Kiwi in OBS
+		mksquashfs "${SQUASHFS_CONTENT_DIR}" "${NEW_SQUASHFS_IMG}" -noappend -b 1M -comp xz -Xbcj x86 &>/dev/null
+		XORRISO_ARGS+=("-map" "${NEW_SQUASHFS_IMG}" "${SQUASHFS_IMG_PATH_IN_ISO}")
+	fi
+
+	if [[ "$DO_GRUB_ACTIONS" == "true" ]]; then
+		LOCAL_GRUB_CFG="${WORK_DIR}/grub.cfg"
+		info "Extracting ${GRUB_CFG_PATH_IN_ISO} from ${ISO_FILE}..."
+		xorriso -osirrox on -indev "${ISO_FILE}" -extract "${GRUB_CFG_PATH_IN_ISO}" "${LOCAL_GRUB_CFG}" &>/dev/null
+
+		if [[ -n "$GRUB_UPDATE_FILE" ]]; then
+			info "Updating grub.cfg from ${GRUB_UPDATE_FILE}..."
+			if [[ ! -f "$GRUB_UPDATE_FILE" ]]; then error "Grub update file not found: $GRUB_UPDATE_FILE"; exit 1; fi
+			cp "$GRUB_UPDATE_FILE" "$LOCAL_GRUB_CFG"
+		fi
+
+		if [[ -n "$GRUB_APPEND_OPTS" ]]; then
+			info "Appending boot options to grub.cfg: '${GRUB_APPEND_OPTS}'"
+			awk -v opts_to_append="${GRUB_APPEND_OPTS}" '
+				BEGIN { state = 0 }
+				/^[[:space:]]*menuentry "Install / { state = 1 }
+				/^[[:space:]]*menuentry "Failsafe -- Install / { state = 1 }
+				/^[[:space:]]*menuentry "Check Installation Medium"/ { state = 1 }
+				(state == 1) && /^[[:space:]]*(linux|linuxefi)/ { $0 = $0 " " opts_to_append; state = 2; }
+				/^[[:space:]]*\}/ { state = 0 }
+				{ print }
+			' "${LOCAL_GRUB_CFG}" >"${LOCAL_GRUB_CFG}.tmp" && mv "${LOCAL_GRUB_CFG}.tmp" "${LOCAL_GRUB_CFG}"
+		fi
+
+		if [[ "$GRUB_INTERACTIVE" == "true" ]]; then
+			if ! command -v "${EDITOR}" &>/dev/null; then error "Editor '${EDITOR}' not found."; exit 1; fi
+			info "Opening grub.cfg for interactive editing with ${EDITOR}..."
+			"${EDITOR}" "${LOCAL_GRUB_CFG}"
+		fi
+		XORRISO_ARGS+=("-map" "${LOCAL_GRUB_CFG}" "${GRUB_CFG_PATH_IN_ISO}")
+	fi
 
 	info "Creating new ISO file ${NEW_ISO_FILENAME}..."
-	xorriso -indev "${ISO_FILE}" -outdev "${NEW_ISO_FILENAME}" \
-		-map "${NEW_SQUASHFS_IMG}" "${SQUASHFS_IMG_PATH_IN_ISO}" \
-		-boot_image 'any' 'replay'
+	XORRISO_ARGS+=("-boot_image" "any" "replay")
+	xorriso "${XORRISO_ARGS[@]}"
 
 	if command -v tagmedia &>/dev/null; then
 		info "Calculating the ISO file checksum..."

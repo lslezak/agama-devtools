@@ -28,11 +28,14 @@ It automates the following process:
     - **Interactive Mode (default):** Enters a `chroot` shell, allowing you to modify the
       installer's root filesystem.
     - **Copy Mode (`--copy`):** Copies local files/directories into the root filesystem.
-    - **Run Mode (`--run`):** Executes a command within the `chroot`.
-    - **Combination:** Any combination of `--copy`, `--run`, and `--interactive`
-      can be used. Operations are performed in that order.
-5. If all operations succeed, it repackages the modified `rootfs.img` into a new `squashfs.img` and
-   creates a new ISO.
+    - **Run Mode (`--run`):** Executes a command within the `chroot` environment.
+    - **Grub Editing**: Includes options (`--grub-append`, `--grub-update`, `--grub-interactive`)
+      to modify the `grub.cfg` bootloader configuration, and `--grub-extract` to extract it
+      for inspection.
+    - **Combination:** Any combination of rootfs and grub modification options can be used in a
+      single command.
+5. If any modifications are made, the script repackages the necessary components (`rootfs.img`
+   and/or `grub.cfg`) into a new ISO image.
     - With `--rebuild`, the `rootfs.img` is recreated from scratch to produce a clean filesystem.
       This is useful if you delete some big files from the root filesystem or you use some big
       temporary files, for example installing RPM packages.
@@ -57,6 +60,9 @@ sudo ./iso-edit-live-root.sh --run "zypper -n in htop" /path/to/original.iso
 
 # Copy a file and then enter an interactive shell to verify
 sudo ./iso-edit-live-root.sh --copy ./debug.conf /etc/debug.conf --interactive /path/to/original.iso
+
+# Modify both the rootfs and the bootloader in one command
+sudo ./iso-edit-live-root.sh --run "zypper -n in vim" --grub-append "sshd=1" /path/to/original.iso
 ```
 
 ## Use cases
