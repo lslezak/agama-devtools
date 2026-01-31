@@ -15,15 +15,21 @@ set -o pipefail # The return value of a pipeline is the status of the last comma
 if [[ -t 2 && $(tput colors 2>/dev/null) -ge 8 ]]; then
 	RED=$(tput setaf 1)
 	GREEN=$(tput setaf 2)
+	YELLOW=$(tput setaf 3)
 	NC=$(tput sgr0) # No Color
 else
 	RED=""
 	GREEN=""
+	YELLOW=""
 	NC=""
 fi
 
 error() {
 	echo >&2 "${RED}ERROR: ${*}${NC}"
+}
+
+warning() {
+	echo >&2 "${YELLOW}WARNING: ${*}${NC}"
 }
 
 info() {
@@ -59,6 +65,7 @@ usage() {
 	echo "  --rebuild           Rebuild the rootfs ext4 image from scratch to remove deleted data."
 	echo "  --size <size>       Create a new rootfs image of <size> (e.g., 4G)."
 	echo "                      This option implies --rebuild."
+	echo "  --grub-default <N>    Set the default grub menu entry to N."
 	echo "  --grub-append <opts> Append kernel options to 'Install' menu entries in grub.cfg."
 	echo "  --grub-extract [path] Extract grub.cfg to [path] (default: ./grub.cfg) and exit."
 	echo "  --grub-update <file> Update grub.cfg from a local file."
@@ -147,6 +154,7 @@ REBUILD_ROOTFS=false
 ORIG_ROOTFS_MOUNT_POINT=""
 NEW_ROOTFS_SIZE=""
 COPIED_RESOLV_CONF_CHECKSUM=""
+GRUB_DEFAULT_ITEM=""
 GRUB_APPEND_OPTS=""
 GRUB_UPDATE_FILE=""
 GRUB_INTERACTIVE=false
@@ -205,6 +213,14 @@ while [[ $# -gt 0 ]]; do
 		REBUILD_ROOTFS=true
 		shift 2
 		;;
+	--grub-default)
+		if [[ -z "${2:-}" || "$2" =~ ^- || ! "$2" =~ ^[0-9]+$ ]]; then
+			error "--grub-default requires a non-negative number."
+			usage
+		fi
+		GRUB_DEFAULT_ITEM="$2"
+		shift 2
+		;;
 	--grub-append)
 		if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
 			error "--grub-append requires an options string."
@@ -259,7 +275,7 @@ fi
 
 # Handle grub-extract as an exclusive action
 if [[ -n "$GRUB_EXTRACT_PATH" ]]; then
-	if [[ ${#COPY_OPS[@]} -gt 0 || -n "$RUN_COMMAND" || "$INTERACTIVE_SHELL" == "true" || -n "$GRUB_APPEND_OPTS" || -n "$GRUB_UPDATE_FILE" || "$GRUB_INTERACTIVE" == "true" || "$REBUILD_ROOTFS" == "true" ]]; then
+	if [[ ${#COPY_OPS[@]} -gt 0 || -n "$RUN_COMMAND" || "$INTERACTIVE_SHELL" == "true" || -n "$GRUB_APPEND_OPTS" || -n "$GRUB_UPDATE_FILE" || "$GRUB_INTERACTIVE" == "true" || "$REBUILD_ROOTFS" == "true" || -n "$GRUB_DEFAULT_ITEM" ]]; then
 		error "--grub-extract cannot be combined with other modification options."
 		exit 1
 	fi
@@ -272,10 +288,22 @@ if [[ -n "$GRUB_EXTRACT_PATH" ]]; then
 	exit 0
 fi
 
-if [[ $EUID -ne 0 ]]; then
-	error "This script needs to run with root privileges to mount filesystems."
-	error "Please login as root or run it using 'sudo'."
-	exit 1
+DEFAULT_ACTION=false
+if [[ ${#COPY_OPS[@]} -eq 0 && -z "$RUN_COMMAND" && "$INTERACTIVE_SHELL" == "false" && -z "$GRUB_APPEND_OPTS" && -z "$GRUB_UPDATE_FILE" && "$GRUB_INTERACTIVE" == "false" && -z "$GRUB_DEFAULT_ITEM" ]]; then
+	DEFAULT_ACTION=true
+fi
+
+DO_ROOTFS_ACTIONS=false
+if [[ ${#COPY_OPS[@]} -gt 0 || -n "$RUN_COMMAND" || "$INTERACTIVE_SHELL" == "true" || "$DEFAULT_ACTION" == "true" || "$REBUILD_ROOTFS" == "true" ]]; then
+	DO_ROOTFS_ACTIONS=true
+fi
+
+if [[ "$DO_ROOTFS_ACTIONS" == "true" ]]; then
+	if [[ $EUID -ne 0 ]]; then
+		error "Root privileges are required to modify the root filesystem."
+		error "Please run again using 'sudo'."
+		exit 1
+	fi
 fi
 
 if ! command -v xorriso &>/dev/null; then
@@ -384,7 +412,7 @@ if [[ ${#COPY_OPS[@]} -gt 0 ]]; then
 		info "Copying '${local_path}' to '${dest_path}'..."
 		# Ensure destination directory exists if we are copying a file into a new dir
 		mkdir -p "$(dirname "${dest_path}")"
-		cp "${local_path}" "${dest_path}"
+		cp -a "${local_path}" "${dest_path}"
 	done
 fi
 
@@ -403,12 +431,6 @@ if [[ -n "$RUN_COMMAND" ]]; then
 		error "Command failed with exit code ${RUN_EXIT_CODE}. Discarding changes."
 		exit 1
 	fi
-fi
-
-# Determine if default action (interactive rootfs edit) is needed
-DEFAULT_ACTION=false
-if [[ ${#COPY_OPS[@]} -eq 0 && -z "$RUN_COMMAND" && "$INTERACTIVE_SHELL" == "false" && -z "$GRUB_APPEND_OPTS" && -z "$GRUB_UPDATE_FILE" && "$GRUB_INTERACTIVE" == "false" ]]; then
-	DEFAULT_ACTION=true
 fi
 
 if [[ "$INTERACTIVE_SHELL" == "true" || "$DEFAULT_ACTION" == "true" ]]; then
@@ -433,13 +455,8 @@ if [[ "$INTERACTIVE_SHELL" == "true" || "$DEFAULT_ACTION" == "true" ]]; then
 	fi
 fi
 
-DO_ROOTFS_ACTIONS=false
-if [[ ${#COPY_OPS[@]} -gt 0 || -n "$RUN_COMMAND" || "$INTERACTIVE_SHELL" == "true" || "$DEFAULT_ACTION" == "true" ]]; then
-	DO_ROOTFS_ACTIONS=true
-fi
-
 DO_GRUB_ACTIONS=false
-if [[ -n "$GRUB_APPEND_OPTS" || -n "$GRUB_UPDATE_FILE" || "$GRUB_INTERACTIVE" == "true" ]]; then
+if [[ -n "$GRUB_APPEND_OPTS" || -n "$GRUB_UPDATE_FILE" || "$GRUB_INTERACTIVE" == "true" || -n "$GRUB_DEFAULT_ITEM" ]]; then
 	DO_GRUB_ACTIONS=true
 fi
 
@@ -469,6 +486,15 @@ if [[ "$DO_ROOTFS_ACTIONS" == "true" || "$DO_GRUB_ACTIONS" == "true" ]]; then
 			info "Updating grub.cfg from ${GRUB_UPDATE_FILE}..."
 			if [[ ! -f "$GRUB_UPDATE_FILE" ]]; then error "Grub update file not found: $GRUB_UPDATE_FILE"; exit 1; fi
 			cp "$GRUB_UPDATE_FILE" "$LOCAL_GRUB_CFG"
+		fi
+
+		if [[ -n "$GRUB_DEFAULT_ITEM" ]]; then
+			if ! grep -q '^[[:space:]]*set[[:space:]]\+default=' "${LOCAL_GRUB_CFG}"; then
+				warning "'set default=...' line not found in grub.cfg. Cannot set default entry."
+			else
+				info "Setting default grub menu entry to '${GRUB_DEFAULT_ITEM}'"
+				sed -i "s/^\([[:space:]]*set[[:space:]]\+default=\).*/\1\"${GRUB_DEFAULT_ITEM}\"/" "${LOCAL_GRUB_CFG}"
+			fi
 		fi
 
 		if [[ -n "$GRUB_APPEND_OPTS" ]]; then

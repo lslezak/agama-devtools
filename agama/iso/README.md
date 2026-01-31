@@ -29,7 +29,7 @@ It automates the following process:
       installer's root filesystem.
     - **Copy Mode (`--copy`):** Copies local files/directories into the root filesystem.
     - **Run Mode (`--run`):** Executes a command within the `chroot` environment.
-    - **Grub Editing**: Includes options (`--grub-append`, `--grub-update`, `--grub-interactive`)
+    - **Grub Editing**: Includes options (`--grub-default`, `--grub-append`, `--grub-update`, `--grub-interactive`)
       to modify the `grub.cfg` bootloader configuration, and `--grub-extract` to extract it
       for inspection.
     - **Combination:** Any combination of rootfs and grub modification options can be used in a
@@ -63,6 +63,9 @@ sudo ./iso-edit-live-root.sh --copy ./debug.conf /etc/debug.conf --interactive /
 
 # Modify both the rootfs and the bootloader in one command
 sudo ./iso-edit-live-root.sh --run "zypper -n in vim" --grub-append "sshd=1" /path/to/original.iso
+
+# Set the default boot menu entry to the second menu item (installation)
+sudo ./iso-edit-live-root.sh --grub-default 1 /path/to/original.iso
 ```
 
 ## Use cases
