@@ -1,4 +1,4 @@
-# Agama ISO image tools
+# Agama ISO builder
 
 This directory contains a helper script for inspecting and modifying the Agama installation ISO
 images.
@@ -7,9 +7,26 @@ images.
 > *The script builds a new modified ISO file, there is no support for using the modified
 > installer! Use at your own risk!*
 
-## `edit-agama-iso.sh`
+- [Agama ISO builder](#agama-iso-builder)
+  - [Usage](#usage)
+  - [Use cases](#use-cases)
+    - [Changing default boot menu item](#changing-default-boot-menu-item)
+    - [Appending boot options](#appending-boot-options)
+    - [Replacing installer component](#replacing-installer-component)
+    - [Setting default hostname](#setting-default-hostname)
+    - [Adding autoinstallation profile](#adding-autoinstallation-profile)
+    - [Adding SSH key](#adding-ssh-key)
+    - [Adding server SSL certificate](#adding-server-ssl-certificate)
+    - [Adding local repository](#adding-local-repository)
+    - [Making an offline installation medium](#making-an-offline-installation-medium)
+    - [Adding driver update (DUD)](#adding-driver-update-dud)
+    - [Adding self-update repository](#adding-self-update-repository)
+    - [Installing debugging tools](#installing-debugging-tools)
+    - [Enabling serial console](#enabling-serial-console)
+    - [Updating kernel and initrd](#updating-kernel-and-initrd)
 
-A script to modify the root filesystem of an installer ISO and repackage it.
+The `agama-iso-builder` script allows modifying the root filesystem of an installer ISO and repackage it.
+
 It automates the following process:
 
 1. Extracts `LiveOS/squashfs.img` from the source ISO.
@@ -41,28 +58,28 @@ privileges for modifying the root filesystem image. For modifying only the ISO i
 (updating the boot menu, adding packages to the medium, updating kernel/initrd) the root permissions
 are not required.
 
-### Usage
+## Usage
 
 ```sh
 # Interactively make changes in the root image and save them to a new ISO
-sudo ./edit-agama-iso.sh --output /path/to/new.iso /path/to/original.iso
+sudo ./agama-iso-builder --output /path/to/new.iso /path/to/original.iso
 
 # Non-interactively copy a custom script into the image and build a new ISO
-sudo ./edit-agama-iso.sh --copy-root ./my-script.sh /usr/local/bin/my-script.sh /path/to/original.iso
+sudo ./agama-iso-builder --copy-root ./my-script.sh /usr/local/bin/my-script.sh /path/to/original.iso
 
 # Run a command to install a package and build a new ISO
-sudo ./edit-agama-iso.sh --chroot-run "zypper -n in htop" /path/to/original.iso
+sudo ./agama-iso-builder --chroot-run "zypper -n in htop" /path/to/original.iso
 
 # Copy a file and then enter an interactive shell to verify
-sudo ./edit-agama-iso.sh --copy-root ./debug.conf /etc/debug.conf --chroot-shell /path/to/original.iso
+sudo ./agama-iso-builder --copy-root ./debug.conf /etc/debug.conf --chroot-shell /path/to/original.iso
 
 # Set the default boot menu entry to installation and decrease the default timeout to 3 seconds
-./edit-agama-iso.sh --grub-default 1 --grub-timeout 3 /path/to/original.iso
+./agama-iso-builder --grub-default 1 --grub-timeout 3 /path/to/original.iso
 ```
 
 ## Use cases
 
-Here are some useful tips and use cases for the `edit-agama-iso.sh` script.
+Here are some useful tips and use cases for the `agama-iso-builder` script.
 
 ### Changing default boot menu item
 
@@ -73,7 +90,7 @@ Agama default is to boot from disk).
 It is also possible to change the timeout for selecting the default menu item.
 
 ```sh
-./edit-agama-iso.sh --grub-default 1 --grub-timeout 3 original.iso
+./agama-iso-builder --grub-default 1 --grub-timeout 3 original.iso
 ```
 
 ### Appending boot options
@@ -82,7 +99,7 @@ You can append any kernel boot option using `--grub-append`. For example, to dis
 in the installer, you can append the `inst.self_update=0` boot option.
 
 ```sh
-./edit-agama-iso.sh --grub-append "inst.self_update=0" original.iso
+./agama-iso-builder --grub-append "inst.self_update=0" original.iso
 ```
 
 See the [Agama boot options](https://agama-project.github.io/docs/user/reference/boot_options)
@@ -95,10 +112,10 @@ You can either replace the files from the locally built sources or install an up
 
 ```sh
 # replace the web frontend from sources
-sudo ./edit-agama-iso.sh --copy-root ./agama/web/dist /usr/share/agama/web_ui original.iso
+sudo ./agama-iso-builder --copy-root ./agama/web/dist /usr/share/agama/web_ui original.iso
 
 # replace the web frontend from RPM package
-sudo ./edit-agama-iso.sh --copy-root ./agama-web-ui.noarch.rpm /packages --chroot-run "zypper -n in /packages/agama-web-ui.noarch.rpm" original.iso
+sudo ./agama-iso-builder --copy-root ./agama-web-ui.noarch.rpm /packages --chroot-run "zypper -n in /packages/agama-web-ui.noarch.rpm" original.iso
 ```
 
 When using an RPM package it can be installed also as an self-update or driver update (DUD). The
@@ -111,7 +128,7 @@ update](#adding-driver-update-dud) sections below for more details.
 You can pre-configure the hostname for the running installer using the `hostname` boot option.
 
 ```sh
-./edit-agama-iso.sh --grub-append "hostname=my-test-system" original.iso
+./agama-iso-builder --grub-append "hostname=my-test-system" original.iso
 ```
 
 Then you can access the installer remotely using the `https://my-test-system.local` address.
@@ -127,7 +144,7 @@ Then, use `--grub-append` to add the `inst.auto` boot parameter, pointing to the
 
 ```sh
 # the installation medium is mounted at the /run/initramfs/live directory
-./edit-agama-iso.sh --copy-iso ./profile.json /profile.json --grub-append "inst.auto=file:///run/initramfs/live/profile.json" original.iso
+./agama-iso-builder --copy-iso ./profile.json /profile.json --grub-append "inst.auto=file:///run/initramfs/live/profile.json" original.iso
 ```
 
 ### Adding SSH key
@@ -138,7 +155,7 @@ filesystem.
 
 ```sh
 # the name of your SSH public key file might be different on your system
-sudo ./edit-agama-iso.sh --copy-root ~/.ssh/id_ed25519.pub /root/.ssh/authorized_keys original.iso
+sudo ./agama-iso-builder --copy-root ~/.ssh/id_ed25519.pub /root/.ssh/authorized_keys original.iso
 ```
 
 ### Adding server SSL certificate
@@ -147,7 +164,7 @@ To avoid warnings when using an automatically generated SSL certificate, you can
 predefined certificate in the installer.
 
 ```sh
-sudo ./edit-agama-iso.sh --copy-root cert.pem /etc/agama.d/ssl/cert.pem --copy-root key.pem /etc/agama.d/ssl/key.pem original.iso
+sudo ./agama-iso-builder --copy-root cert.pem /etc/agama.d/ssl/cert.pem --copy-root key.pem /etc/agama.d/ssl/key.pem original.iso
 ```
 
 Then you can import the certificate to your web browser or use it with curl:
@@ -175,7 +192,7 @@ To add a local repository to the ISO image, you need to copy the repository file
 and add a boot option pointing to it.
 
 ```sh
-./edit-agama-iso.sh --copy-iso repository /repository --grub-append "inst.install_url=dir:/run/initramfs/live/repository" original.iso
+./agama-iso-builder --copy-iso repository /repository --grub-append "inst.install_url=dir:/run/initramfs/live/repository" original.iso
 ```
 
 For testing without installing the packages you can copy only the repository metadata located in the
@@ -187,7 +204,7 @@ To add a full package repository to the installation medium download the needed 
 into the `repository` subdirectory and then run this command:
 
 ```sh
-./edit-agama-iso.sh --copy-iso repository /install original.iso
+./agama-iso-builder --copy-iso repository /install original.iso
 ```
 
 You do not have to download all needed packages if you want to test something in the installer
@@ -204,10 +221,10 @@ the ISO and point to it with the dud boot parameter.
 
 ```sh
 # DUD archive created by `mkdud` tool
-./edit-agama-iso.sh --copy-iso ./update.dud /dud/update.dud --grub-append "inst.dud=file:/run/initramfs/live/dud/update.dud" original.iso
+./agama-iso-builder --copy-iso ./update.dud /dud/update.dud --grub-append "inst.dud=file:/run/initramfs/live/dud/update.dud" original.iso
 
 # RPM package as DUD
-./edit-agama-iso.sh --copy-iso ./package.rpm /dud/package.rpm --grub-append "inst.dud=file:/run/initramfs/live/dud/package.rpm" original.iso
+./agama-iso-builder --copy-iso ./package.rpm /dud/package.rpm --grub-append "inst.dud=file:/run/initramfs/live/dud/package.rpm" original.iso
 ```
 
 ### Adding self-update repository
@@ -221,7 +238,7 @@ device label, that works for both DVD and USB media.
 xorriso -indev original.iso -pvd_info 2> /dev/null | grep "Volume Id"
 
 # use hd: URL can refer to a "by-label" device label, the label is the volume ID
-./edit-agama-iso.sh --copy-iso ./updates /updates --grub-append "inst.self_update=hd:/updates?device=/dev/disk/by-label/Install-openSUSE-x86_64" original.iso
+./agama-iso-builder --copy-iso ./updates /updates --grub-append "inst.self_update=hd:/updates?device=/dev/disk/by-label/Install-openSUSE-x86_64" original.iso
 ```
 
 ### Installing debugging tools
@@ -229,7 +246,7 @@ xorriso -indev original.iso -pvd_info 2> /dev/null | grep "Volume Id"
 If you need to debug the installer, you can add tools like `strace` or `tcpdump`.
 
 ```sh
-sudo ./edit-agama-iso.sh --chroot-run "zypper -n in strace tcpdump" original.iso
+sudo ./agama-iso-builder --chroot-run "zypper -n in strace tcpdump" original.iso
 ```
 
 ### Enabling serial console
@@ -238,7 +255,7 @@ For debugging on virtual machines or physical hardware with a serial port, you c
 console.
 
 ```sh
-./edit-agama-iso.sh --grub-append "console=ttyS0,115200" original.iso
+./agama-iso-builder --grub-append "console=ttyS0,115200" original.iso
 ```
 
 ### Updating kernel and initrd
@@ -249,5 +266,5 @@ It is possible to replace also the Linux kernel and the initrd image.
 installer will not start properly!*
 
 ```sh
-./edit-agama-iso.sh --copy-iso kernel /boot/x86_64/loader/linux --copy-iso initrd /boot/x86_64/loader/initrd  original.iso
+./agama-iso-builder --copy-iso kernel /boot/x86_64/loader/linux --copy-iso initrd /boot/x86_64/loader/initrd  original.iso
 ```
