@@ -119,6 +119,28 @@ sudo ./iso-edit-live-root.sh --copy-root ~/.ssh/id_ed25519.pub /root/.ssh/author
 
 ### Adding server SSL certificate
 
+To avoid warnings when using an automatically generated SSL certificate, you can include your
+predefined certificate in the installer.
+
+```sh
+sudo ./iso-edit-live-root.sh --copy-root cert.pem /etc/agama.d/ssl/cert.pem --copy-root key.pem /etc/agama.d/ssl/key.pem original.iso
+```
+
+Then you can import the certificate to your web browser or use it with curl:
+
+```sh
+curl --cacert cert.pem https://agama.local
+```
+
+### Adding local repository
+
+To add a local repository to the ISO image, you need to copy the repository files into the ISO image
+and add a boot option pointing to it.
+
+```sh
+./iso-edit-live-root.sh --copy-iso repository /repository --grub-append "inst.install_url=dir:/run/initramfs/live/repository" original.iso
+```
+
 ### Making an offline installation medium
 
 To add a full package repository to the installation medium download the needed repository locally
@@ -134,6 +156,6 @@ located in the `/repodata` subdirectory in the repository.
 You can use the [repo-meta-mirror](../../network/repo-meta-mirror) script for downloading only the
 metadata from a remote repository.
 
-### Adding DUD
+### Adding driver update (DUD)
 
 ### Adding self-update repository
