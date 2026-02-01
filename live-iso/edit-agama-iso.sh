@@ -1,7 +1,6 @@
 #!/bin/bash
 #
-# A script to extract and mount LiveOS/squashfs.img and the rootfs.img
-# contained within it from a given ISO file.
+# A script for modifying the Agama installation ISO images.
 #
 # Dependencies: xorriso, unsquashfs, mksquashfs, root privileges (for mount)
 #
@@ -52,8 +51,8 @@ EDITOR="${EDITOR:-vim}"
 
 usage() {
   echo "Usage: $0 [options] <iso_file>"
-  echo "Mounts the rootfs from an ISO, provides a shell to modify it, and"
-  echo "re-packages it into a new ISO if changes are saved."
+	echo ""
+  echo "Allows modifying the Agama installation ISO images."
   echo ""
   echo "Options:"
   echo "  -h, --help           Show this help message and exit."

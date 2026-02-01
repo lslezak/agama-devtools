@@ -9,7 +9,7 @@ the [Agama installer](https://github.com/agama-project/agama).
 
 - [rest-api](./agama/rest-api/) - helper scripts for interacting with the new
   Agama v2 REST API (still in development)
-- [iso-tools](./agama/iso/) - helper scripts for inspecting and modifying Agama
+- [live-iso](./live-iso/) - helper script for modifying and rebuilding the Agama
   installation ISO images.
 
 ## Network scripts

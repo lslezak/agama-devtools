@@ -7,7 +7,7 @@ images.
 > *The script builds a new modified ISO file, there is no support for using the modified
 > installer! Use at your own risk!*
 
-## `iso-edit-live-root.sh`
+## `edit-agama-iso.sh`
 
 A script to modify the root filesystem of an installer ISO and repackage it.
 It automates the following process:
@@ -45,24 +45,24 @@ are not required.
 
 ```sh
 # Interactively make changes in the root image and save them to a new ISO
-sudo ./iso-edit-live-root.sh --output /path/to/new.iso /path/to/original.iso
+sudo ./edit-agama-iso.sh --output /path/to/new.iso /path/to/original.iso
 
 # Non-interactively copy a custom script into the image and build a new ISO
-sudo ./iso-edit-live-root.sh --copy-root ./my-script.sh /usr/local/bin/my-script.sh /path/to/original.iso
+sudo ./edit-agama-iso.sh --copy-root ./my-script.sh /usr/local/bin/my-script.sh /path/to/original.iso
 
 # Run a command to install a package and build a new ISO
-sudo ./iso-edit-live-root.sh --chroot-run "zypper -n in htop" /path/to/original.iso
+sudo ./edit-agama-iso.sh --chroot-run "zypper -n in htop" /path/to/original.iso
 
 # Copy a file and then enter an interactive shell to verify
-sudo ./iso-edit-live-root.sh --copy-root ./debug.conf /etc/debug.conf --chroot-shell /path/to/original.iso
+sudo ./edit-agama-iso.sh --copy-root ./debug.conf /etc/debug.conf --chroot-shell /path/to/original.iso
 
 # Set the default boot menu entry to installation and decrease the default timeout to 3 seconds
-./iso-edit-live-root.sh --grub-default 1 --grub-timeout 3 /path/to/original.iso
+./edit-agama-iso.sh --grub-default 1 --grub-timeout 3 /path/to/original.iso
 ```
 
 ## Use cases
 
-Here are some useful tips and use cases for the `iso-edit-live-root.sh` script.
+Here are some useful tips and use cases for the `edit-agama-iso.sh` script.
 
 ### Changing default boot menu item
 
@@ -73,7 +73,7 @@ Agama default is to boot from disk).
 It is also possible to change the timeout for selecting the default menu item.
 
 ```sh
-./iso-edit-live-root.sh --grub-default 1 --grub-timeout 3 original.iso
+./edit-agama-iso.sh --grub-default 1 --grub-timeout 3 original.iso
 ```
 
 ### Appending boot options
@@ -82,7 +82,7 @@ You can append any kernel boot option using `--grub-append`. For example, to dis
 in the installer, you can append the `inst.self_update=0` boot option.
 
 ```sh
-./iso-edit-live-root.sh --grub-append "inst.self_update=0" original.iso
+./edit-agama-iso.sh --grub-append "inst.self_update=0" original.iso
 ```
 
 See the [Agama boot options](https://agama-project.github.io/docs/user/reference/boot_options)
@@ -95,10 +95,10 @@ You can either replace the files from the locally built sources or install an up
 
 ```sh
 # replace the web frontend from sources
-sudo ./iso-edit-live-root.sh --copy-root ./agama/web/dist /usr/share/agama/web_ui original.iso
+sudo ./edit-agama-iso.sh --copy-root ./agama/web/dist /usr/share/agama/web_ui original.iso
 
 # replace the web frontend from RPM package
-sudo ./iso-edit-live-root.sh --copy-root ./agama-web-ui.noarch.rpm /packages --chroot-run "zypper -n in /packages/agama-web-ui.noarch.rpm" original.iso
+sudo ./edit-agama-iso.sh --copy-root ./agama-web-ui.noarch.rpm /packages --chroot-run "zypper -n in /packages/agama-web-ui.noarch.rpm" original.iso
 ```
 
 When using an RPM package it can be installed also as an self-update or driver update (DUD). The
@@ -111,7 +111,7 @@ update](#adding-driver-update-dud) sections below for more details.
 You can pre-configure the hostname for the running installer using the `hostname` boot option.
 
 ```sh
-./iso-edit-live-root.sh --grub-append "hostname=my-test-system" original.iso
+./edit-agama-iso.sh --grub-append "hostname=my-test-system" original.iso
 ```
 
 Then you can access the installer remotely using the `https://my-test-system.local` address.
@@ -127,7 +127,7 @@ Then, use `--grub-append` to add the `inst.auto` boot parameter, pointing to the
 
 ```sh
 # the installation medium is mounted at the /run/initramfs/live directory
-./iso-edit-live-root.sh --copy-iso ./profile.json /profile.json --grub-append "inst.auto=file:///run/initramfs/live/profile.json" original.iso
+./edit-agama-iso.sh --copy-iso ./profile.json /profile.json --grub-append "inst.auto=file:///run/initramfs/live/profile.json" original.iso
 ```
 
 ### Adding SSH key
@@ -138,7 +138,7 @@ filesystem.
 
 ```sh
 # the name of your SSH public key file might be different on your system
-sudo ./iso-edit-live-root.sh --copy-root ~/.ssh/id_ed25519.pub /root/.ssh/authorized_keys original.iso
+sudo ./edit-agama-iso.sh --copy-root ~/.ssh/id_ed25519.pub /root/.ssh/authorized_keys original.iso
 ```
 
 ### Adding server SSL certificate
@@ -147,7 +147,7 @@ To avoid warnings when using an automatically generated SSL certificate, you can
 predefined certificate in the installer.
 
 ```sh
-sudo ./iso-edit-live-root.sh --copy-root cert.pem /etc/agama.d/ssl/cert.pem --copy-root key.pem /etc/agama.d/ssl/key.pem original.iso
+sudo ./edit-agama-iso.sh --copy-root cert.pem /etc/agama.d/ssl/cert.pem --copy-root key.pem /etc/agama.d/ssl/key.pem original.iso
 ```
 
 Then you can import the certificate to your web browser or use it with curl:
@@ -175,7 +175,7 @@ To add a local repository to the ISO image, you need to copy the repository file
 and add a boot option pointing to it.
 
 ```sh
-./iso-edit-live-root.sh --copy-iso repository /repository --grub-append "inst.install_url=dir:/run/initramfs/live/repository" original.iso
+./edit-agama-iso.sh --copy-iso repository /repository --grub-append "inst.install_url=dir:/run/initramfs/live/repository" original.iso
 ```
 
 For testing without installing the packages you can copy only the repository metadata located in the
@@ -187,7 +187,7 @@ To add a full package repository to the installation medium download the needed 
 into the `repository` subdirectory and then run this command:
 
 ```sh
-./iso-edit-live-root.sh --copy-iso repository /install original.iso
+./edit-agama-iso.sh --copy-iso repository /install original.iso
 ```
 
 You do not have to download all needed packages if you want to test something in the installer
@@ -204,10 +204,10 @@ the ISO and point to it with the dud boot parameter.
 
 ```sh
 # DUD archive created by `mkdud` tool
-./iso-edit-live-root.sh --copy-iso ./update.dud /dud/update.dud --grub-append "inst.dud=file:/run/initramfs/live/dud/update.dud" original.iso
+./edit-agama-iso.sh --copy-iso ./update.dud /dud/update.dud --grub-append "inst.dud=file:/run/initramfs/live/dud/update.dud" original.iso
 
 # RPM package as DUD
-./iso-edit-live-root.sh --copy-iso ./package.rpm /dud/package.rpm --grub-append "inst.dud=file:/run/initramfs/live/dud/package.rpm" original.iso
+./edit-agama-iso.sh --copy-iso ./package.rpm /dud/package.rpm --grub-append "inst.dud=file:/run/initramfs/live/dud/package.rpm" original.iso
 ```
 
 ### Adding self-update repository
@@ -221,7 +221,7 @@ device label, that works for both DVD and USB media.
 xorriso -indev original.iso -pvd_info 2> /dev/null | grep "Volume Id"
 
 # use hd: URL can refer to a "by-label" device label, the label is the volume ID
-./iso-edit-live-root.sh --copy-iso ./updates /updates --grub-append "inst.self_update=hd:/updates?device=/dev/disk/by-label/Install-openSUSE-x86_64" original.iso
+./edit-agama-iso.sh --copy-iso ./updates /updates --grub-append "inst.self_update=hd:/updates?device=/dev/disk/by-label/Install-openSUSE-x86_64" original.iso
 ```
 
 ### Installing debugging tools
@@ -229,7 +229,7 @@ xorriso -indev original.iso -pvd_info 2> /dev/null | grep "Volume Id"
 If you need to debug the installer, you can add tools like `strace` or `tcpdump`.
 
 ```sh
-sudo ./iso-edit-live-root.sh --chroot-run "zypper -n in strace tcpdump" original.iso
+sudo ./edit-agama-iso.sh --chroot-run "zypper -n in strace tcpdump" original.iso
 ```
 
 ### Enabling serial console
@@ -238,7 +238,7 @@ For debugging on virtual machines or physical hardware with a serial port, you c
 console.
 
 ```sh
-./iso-edit-live-root.sh --grub-append "console=ttyS0,115200" original.iso
+./edit-agama-iso.sh --grub-append "console=ttyS0,115200" original.iso
 ```
 
 ### Updating kernel and initrd
@@ -249,5 +249,5 @@ It is possible to replace also the Linux kernel and the initrd image.
 installer will not start properly!*
 
 ```sh
-./iso-edit-live-root.sh --copy-iso kernel /boot/x86_64/loader/linux --copy-iso initrd /boot/x86_64/loader/initrd  original.iso
+./edit-agama-iso.sh --copy-iso kernel /boot/x86_64/loader/linux --copy-iso initrd /boot/x86_64/loader/initrd  original.iso
 ```
