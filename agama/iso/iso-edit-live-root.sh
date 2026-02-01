@@ -398,7 +398,6 @@ if [[ "$DO_ROOTFS_ACTIONS" == "true" ]]; then
     mount -o loop,ro "${ROOTFS_IMG_PATH}" "${ORIG_ROOTFS_MOUNT_POINT}"
 
     image_size=""
-    local size_desc
     if [[ -n "$NEW_ROOTFS_SIZE" ]]; then
       image_size="$NEW_ROOTFS_SIZE"
       size_desc="$NEW_ROOTFS_SIZE"
