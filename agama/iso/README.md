@@ -21,7 +21,7 @@ It automates the following process:
     - **Run Mode (`--chroot-run`):** Executes a command within the `chroot` environment.
     - **ISO File Copy (`--copy-iso`):** Copies local files/directories to any path within the ISO
       filesystem.
-    - **Grub Editing**: Includes options (`--grub-default`, `--grub-append`, `--grub-interactive`)
+    - **Grub Editing**: Includes options (`--grub-default`, `--grub-timeout`, `--grub-append`, `--grub-interactive`)
       to modify the `grub.cfg` bootloader configuration. A generic `--extract` option can be used to
       extract any file for inspection.
     - **Combination:** Any combination of rootfs and grub modification options can be used in a
@@ -36,7 +36,7 @@ It automates the following process:
 6. If no changes are to be saved, all temporary files are discarded.
 
 This is useful for debugging or customizing the installer environment. The script requires root
-privileges.
+privileges for modifying the root filesystem image.
 
 ### Usage
 
@@ -53,8 +53,8 @@ sudo ./iso-edit-live-root.sh --chroot-run "zypper -n in htop" /path/to/original.
 # Copy a file and then enter an interactive shell to verify
 sudo ./iso-edit-live-root.sh --copy-root ./debug.conf /etc/debug.conf --chroot-shell /path/to/original.iso
 
-# Set the default boot menu entry to installation
-sudo ./iso-edit-live-root.sh --grub-default 1 /path/to/original.iso
+# Set the default boot menu entry to installation and decrease the default timeout to 3 seconds
+./iso-edit-live-root.sh --grub-default 1 --grub-timeout 3 /path/to/original.iso
 ```
 
 ## Use cases
@@ -67,8 +67,10 @@ To change the default boot menu item, use the `--grub-default` option. The value
 index of the menu entry. For example, to make "Install" action the default use `1` (usually the
 Agama default is to boot from disk).
 
+It is also possible to change the timeout for selecting the default menu item.
+
 ```sh
-./iso-edit-live-root.sh --grub-default 1 original.iso
+./iso-edit-live-root.sh --grub-default 1 --grub-timeout 3 original.iso
 ```
 
 ### Appending boot options
@@ -185,7 +187,7 @@ into the `repository` subdirectory and then run this command:
 ./iso-edit-live-root.sh --copy-iso repository /install original.iso
 ```
 
-You do not have to download all needed packaged if you want to test something in the installer
+You do not have to download all needed packages if you want to test something in the installer
 before starting the real installation. For testing you can include only the repository metadata
 located in the `/repodata` subdirectory in the repository.
 

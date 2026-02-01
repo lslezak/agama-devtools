@@ -68,6 +68,7 @@ usage() {
   echo "  --size <size>       Create a new rootfs image of <size> (e.g., 4G)."
   echo "                      This option implies --rebuild."
   echo "  --grub-default <N>    Set the default grub menu entry to N (must be a number)."
+  echo "  --grub-timeout <N>    Set the grub menu timeout to N seconds."
   echo "  --grub-append <opts> Append kernel options to 'Install' menu entries in grub.cfg."
   echo "  --grub-interactive  Interactively edit grub.cfg using editor."
   echo "  --output <file>     Specify the output ISO file name."
@@ -157,6 +158,7 @@ ORIG_ROOTFS_MOUNT_POINT=""
 NEW_ROOTFS_SIZE=""
 COPIED_RESOLV_CONF_CHECKSUM=""
 GRUB_DEFAULT_ITEM=""
+GRUB_TIMEOUT=""
 GRUB_APPEND_OPTS=""
 GRUB_UPDATE_FILE=""
 GRUB_INTERACTIVE=false
@@ -223,6 +225,14 @@ while [[ $# -gt 0 ]]; do
       usage
     fi
     GRUB_DEFAULT_ITEM="$2"
+    shift 2
+    ;;
+  --grub-timeout)
+    if [[ -z "${2:-}" || "$2" =~ ^- || ! "$2" =~ ^[0-9]+$ ]]; then
+      error "--grub-timeout requires a non-negative number."
+      usage
+    fi
+    GRUB_TIMEOUT="$2"
     shift 2
     ;;
   --grub-append)
@@ -307,7 +317,7 @@ if [[ -n "$EXTRACT_ISO_PATH" ]]; then
 fi
 
 DEFAULT_ACTION=false
-if [[ ${#COPY_OPS[@]} -eq 0 && -z "$RUN_COMMAND" && "$INTERACTIVE_SHELL" == "false" && -z "$GRUB_APPEND_OPTS" && -z "$GRUB_UPDATE_FILE" && "$GRUB_INTERACTIVE" == "false" && -z "$GRUB_DEFAULT_ITEM" && ${#COPY_ISO_OPS[@]} -eq 0 ]]; then
+if [[ ${#COPY_OPS[@]} -eq 0 && -z "$RUN_COMMAND" && "$INTERACTIVE_SHELL" == "false" && -z "$GRUB_APPEND_OPTS" && -z "$GRUB_UPDATE_FILE" && "$GRUB_INTERACTIVE" == "false" && -z "$GRUB_DEFAULT_ITEM" && -z "$GRUB_TIMEOUT" && ${#COPY_ISO_OPS[@]} -eq 0 ]]; then
   DEFAULT_ACTION=true
 fi
 
@@ -477,7 +487,7 @@ if [[ "$DO_ROOTFS_ACTIONS" == "true" ]]; then
 fi
 
 DO_GRUB_ACTIONS=false
-if [[ -n "$GRUB_APPEND_OPTS" || -n "$GRUB_UPDATE_FILE" || "$GRUB_INTERACTIVE" == "true" || -n "$GRUB_DEFAULT_ITEM" ]]; then
+if [[ -n "$GRUB_APPEND_OPTS" || -n "$GRUB_UPDATE_FILE" || "$GRUB_INTERACTIVE" == "true" || -n "$GRUB_DEFAULT_ITEM" || -n "$GRUB_TIMEOUT" ]]; then
   DO_GRUB_ACTIONS=true
 fi
 
@@ -527,6 +537,15 @@ if [[ "$DO_ROOTFS_ACTIONS" == "true" || "$DO_GRUB_ACTIONS" == "true" || ${#COPY_
       else
         info "Setting default grub menu entry to '${GRUB_DEFAULT_ITEM}'"
         sed -i "s/^\([[:space:]]*set[[:space:]]\+default=\).*/\1\"${GRUB_DEFAULT_ITEM}\"/" "${LOCAL_GRUB_CFG}"
+      fi
+    fi
+
+    if [[ -n "$GRUB_TIMEOUT" ]]; then
+      if ! grep -q '^[[:space:]]*set[[:space:]]\+timeout=' "${LOCAL_GRUB_CFG}"; then
+        warning "'set timeout=...' line not found in grub.cfg. Cannot set timeout."
+      else
+        info "Setting grub menu timeout to '${GRUB_TIMEOUT}' seconds"
+        sed -i "s/^\([[:space:]]*set[[:space:]]\+timeout=\).*/\1${GRUB_TIMEOUT}/" "${LOCAL_GRUB_CFG}"
       fi
     fi
 
