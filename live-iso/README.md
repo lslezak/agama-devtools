@@ -25,14 +25,17 @@ images.
     - [Enabling serial console](#enabling-serial-console)
     - [Updating kernel and initrd](#updating-kernel-and-initrd)
 
-The `agama-iso-builder` script allows modifying the root filesystem of an installer ISO and repackage it.
+The `agama-iso-builder` script allows rebuilding the Agama installation ISO images with custom changes.
+
+It can modify these three main areas:
+
+1. The content of the ISO image
+2. The content of the root filesystem image inside the ISO
+3. The bootloader configuration file (the `grub.cfg` file)
 
 It automates the following process:
 
-1. Extracts `LiveOS/squashfs.img` from the source ISO.
-2. Unpacks the `squashfs.img` to access the `LiveOS/rootfs.img` inside.
-3. Mounts the `rootfs.img` in read-write mode.
-4. Does one of the following:
+1. Does one of the following:
     - **Interactive Mode (default):** Enters a `chroot` shell, allowing you to modify the
       installer's root filesystem.
     - **Copy Mode (`--copy-root`):** Copies local files/directories into the root filesystem.
@@ -44,14 +47,14 @@ It automates the following process:
       extract any file for inspection.
     - **Combination:** Any combination of rootfs and grub modification options can be used in a
       single command.
-5. If any modifications are made, the script repackages the necessary components (`rootfs.img`
+2. If any modifications are made, the script repackages the necessary components (`rootfs.img`
    and/or `grub.cfg`) into a new ISO image.
     - With `--rebuild`, the `rootfs.img` is recreated from scratch to produce a clean filesystem.
       This is useful if you delete some big files from the root filesystem or you use some big
       temporary files, for example installing RPM packages.
     - The `--size` option can be used to specify a new size for the rootfs image; this automatically
       implies `--rebuild`.
-6. If no changes are to be saved, all temporary files are discarded.
+3. If no changes are to be saved, all temporary files are discarded.
 
 This is useful for debugging or customizing the installer environment. The script requires root
 privileges for modifying the root filesystem image. For modifying only the ISO image content
@@ -174,7 +177,7 @@ curl --cacert cert.pem https://agama.local
 ```
 
 If you do not have a certificate you can generate a self-signed certificate using the
-[create-self-signed-cert.sh](../../network/https-server/create-self-signed-cert.sh) script:
+[create-self-signed-cert.sh](../network/https-server/create-self-signed-cert.sh) script:
 
 ```sh
 ./create-self-signed-cert.sh --name agama.local
@@ -211,7 +214,7 @@ You do not have to download all needed packages if you want to test something in
 before starting the real installation. For testing you can include only the repository metadata
 located in the `/repodata` subdirectory in the repository.
 
-You can use the [repo-meta-mirror](../../network/repo-meta-mirror) script for downloading only the
+You can use the [repo-meta-mirror](../network/repo-meta-mirror) script for downloading only the
 metadata from a remote repository.
 
 ### Adding driver update (DUD)
