@@ -40,7 +40,7 @@ privileges.
 ### Usage
 
 ```sh
-# Interactively make changes and save them to a new ISO
+# Interactively make changes in the root image and save them to a new ISO
 sudo ./iso-edit-live-root.sh --output /path/to/new.iso /path/to/original.iso
 
 # Non-interactively copy a custom script into the image and build a new ISO
@@ -52,26 +52,65 @@ sudo ./iso-edit-live-root.sh --chroot-run "zypper -n in htop" /path/to/original.
 # Copy a file and then enter an interactive shell to verify
 sudo ./iso-edit-live-root.sh --copy-root ./debug.conf /etc/debug.conf --chroot-shell /path/to/original.iso
 
-# Modify both the rootfs and the bootloader in one command
-sudo ./iso-edit-live-root.sh --chroot-run "zypper -n in vim" --grub-append "sshd=1" /path/to/original.iso
-
 # Set the default boot menu entry to the second menu item (installation)
 sudo ./iso-edit-live-root.sh --grub-default 1 /path/to/original.iso
 ```
 
 ## Use cases
 
-Here are some useful tips and use cases for these scripts.
+Here are some useful tips and use cases for the `iso-edit-live-root.sh` script.
 
 ### Changing default boot menu item
 
+To change the default boot menu item, use the `--grub-default` option. The value is the zero-based
+index of the menu entry. For example, to make "Install" action the default use `1` (usually the
+Agama default is to boot from disk).
+
+```sh
+./iso-edit-live-root.sh --grub-default 1 original.iso
+```
+
 ### Appending boot options
+
+You can append any kernel boot option using `--grub-append`. For example, to disable self-update
+in the installer, you can append the `inst.self_update=0` boot option.
+
+```sh
+./iso-edit-live-root.sh --grub-append "inst.self_update=0" original.iso
+```
+
+See the [Agama boot options](https://agama-project.github.io/docs/user/reference/boot_options)
+documentation.
 
 ### Setting default hostname
 
+You can pre-configure the hostname for the running installer using the `hostname` boot option.
+
+```sh
+./iso-edit-live-root.sh --grub-append "hostname=my-test-system" original.iso
+```
+
+Then you can access the installer remotely using the `https://my-test-system.local` address.
+
 ### Adding autoinstallation profile
 
+To perform an unattended installation, you can add an AutoYaST or Agama profile to the ISO and
+instruct the installer to use it.
+
+First, place your profile (e.g. `profile.json`) in the root directory of the ISO using `--copy-iso`.
+Then, use `--grub-append` to add the `inst.auto` boot parameter, pointing to the file using the
+`file://` scheme.
+
+```sh
+# the installation medium is mounted at the /run/initramfs/live directory
+./iso-edit-live-root.sh --copy-iso ./profile.json /profile.json --grub-append "inst.auto=file:///run/initramfs/live/profile.json" original.iso
+```
+
 ### Adding SSH key
+
+To make remote access easier for debugging, you can add your SSH public key into the image. This
+requires copying your SSH public key to the `/root/.ssh/authorized_keys` file in the root
+filesystem.
 
 ```sh
 # the name of your SSH public key file might be different on your system
