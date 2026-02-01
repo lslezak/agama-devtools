@@ -127,13 +127,16 @@ teardown_chroot_env() {
 cleanup() {
   if [[ -n "${WORK_DIR:-}" && -d "${WORK_DIR}" ]]; then
     if [[ -n "${ORIG_ROOTFS_MOUNT_POINT:-}" ]] && mountpoint -q "${ORIG_ROOTFS_MOUNT_POINT}"; then umount "${ORIG_ROOTFS_MOUNT_POINT}"; fi
-    # Unmount in reverse order of mounting
-    if mountpoint -q "${ROOTFS_MOUNT_POINT}/dev/pts"; then umount "${ROOTFS_MOUNT_POINT}/dev/pts"; fi
-    if mountpoint -q "${ROOTFS_MOUNT_POINT}/dev"; then umount "${ROOTFS_MOUNT_POINT}/dev"; fi
-    if mountpoint -q "${ROOTFS_MOUNT_POINT}/sys"; then umount "${ROOTFS_MOUNT_POINT}/sys"; fi
-    if mountpoint -q "${ROOTFS_MOUNT_POINT}/proc"; then umount "${ROOTFS_MOUNT_POINT}/proc"; fi
-    if mountpoint -q "${ROOTFS_MOUNT_POINT}"; then
-      umount "${ROOTFS_MOUNT_POINT}"
+
+    if [ -n "$ROOTFS_MOUNT_POINT" ]; then
+      # Unmount in reverse order of mounting
+      if mountpoint -q "${ROOTFS_MOUNT_POINT}/dev/pts"; then umount "${ROOTFS_MOUNT_POINT}/dev/pts"; fi
+      if mountpoint -q "${ROOTFS_MOUNT_POINT}/dev"; then umount "${ROOTFS_MOUNT_POINT}/dev"; fi
+      if mountpoint -q "${ROOTFS_MOUNT_POINT}/sys"; then umount "${ROOTFS_MOUNT_POINT}/sys"; fi
+      if mountpoint -q "${ROOTFS_MOUNT_POINT}/proc"; then umount "${ROOTFS_MOUNT_POINT}/proc"; fi
+      if mountpoint -q "${ROOTFS_MOUNT_POINT}"; then
+        umount "${ROOTFS_MOUNT_POINT}"
+      fi
     fi
     rm -rf "${WORK_DIR}"
   fi
@@ -259,10 +262,10 @@ while [[ $# -gt 0 ]]; do
     shift 3
     ;;
   --grub-interactive)
-		if ! command -v "${EDITOR}" &>/dev/null; then
-			error "Editor '${EDITOR}' not found."
-			exit 1
-		fi
+    if ! command -v "${EDITOR}" &>/dev/null; then
+      error "Editor '${EDITOR}' not found."
+      exit 1
+    fi
     GRUB_INTERACTIVE=true
     shift
     ;;
@@ -326,27 +329,6 @@ if ! command -v xorriso &>/dev/null; then
   exit 1
 fi
 
-if ! command -v unsquashfs &>/dev/null; then
-  error "The 'unsquashfs' tool is not installed. Please install it to continue (e.g., install the 'squashfs-tools' package)."
-  exit 1
-fi
-
-if ! command -v mksquashfs &>/dev/null; then
-  error "The 'mksquashfs' tool is not installed. Please install it to continue (e.g., install the 'squashfs-tools' package)."
-  exit 1
-fi
-
-if [[ "$REBUILD_ROOTFS" == "true" ]]; then
-  if ! command -v mkfs.ext4 &>/dev/null; then
-    error "The 'mkfs.ext4' tool is not installed. Please install it to continue (e.g., 'e2fsprogs' package)."
-    exit 1
-  fi
-  if ! command -v truncate &>/dev/null; then
-    error "The 'truncate' tool is not installed. Please install it to continue (e.g., 'coreutils' package)."
-    exit 1
-  fi
-fi
-
 NEW_ISO_FILENAME="${OUTPUT_ISO:-${ISO_FILE%.iso}-edited.iso}"
 if [[ -e "$NEW_ISO_FILENAME" ]]; then
   error "Output file ${NEW_ISO_FILENAME} already exists. Remove it or use --output."
@@ -356,117 +338,141 @@ fi
 WORK_DIR=$(mktemp -d)
 trap cleanup EXIT SIGINT SIGTERM
 
-EXTRACTED_SQUASHFS_IMG="${WORK_DIR}/squashfs.img"
-SQUASHFS_CONTENT_DIR="${WORK_DIR}/squashfs_content"
 ROOTFS_MOUNT_POINT="${WORK_DIR}/rootfs_mount"
 
-mkdir -p "${SQUASHFS_CONTENT_DIR}" "${ROOTFS_MOUNT_POINT}"
-
-info "Extracting ${SQUASHFS_IMG_PATH_IN_ISO} from ${ISO_FILE}..."
-xorriso -osirrox on -indev "${ISO_FILE}" -extract "${SQUASHFS_IMG_PATH_IN_ISO}" "${EXTRACTED_SQUASHFS_IMG}" &>/dev/null
-
-info "Unsquashing ${EXTRACTED_SQUASHFS_IMG} image..."
-unsquashfs -d "${SQUASHFS_CONTENT_DIR}" "${EXTRACTED_SQUASHFS_IMG}" &>/dev/null
-
-ROOTFS_IMG_PATH="${SQUASHFS_CONTENT_DIR}${ROOTFS_IMG_PATH_IN_SQUASHFS}"
-if [[ ! -f "$ROOTFS_IMG_PATH" ]]; then
-  error "${ROOTFS_IMG_PATH} not found inside the squashfs image."
-  exit 1
-fi
-
-if [[ "$REBUILD_ROOTFS" == "true" ]]; then
-  info "Rebuilding rootfs image..."
-  ORIG_ROOTFS_MOUNT_POINT="${WORK_DIR}/orig_rootfs_mount"
-  mkdir -p "${ORIG_ROOTFS_MOUNT_POINT}"
-
-  info "Mounting original rootfs image (read-only)..."
-  mount -o loop,ro "${ROOTFS_IMG_PATH}" "${ORIG_ROOTFS_MOUNT_POINT}"
-
-  image_size=""
-  local size_desc
-  if [[ -n "$NEW_ROOTFS_SIZE" ]]; then
-    image_size="$NEW_ROOTFS_SIZE"
-    size_desc="$NEW_ROOTFS_SIZE"
-  else
-    image_size=$(stat -c %s "${ROOTFS_IMG_PATH}")
-    size_desc="${image_size} bytes (original size)"
+if [[ "$DO_ROOTFS_ACTIONS" == "true" ]]; then
+  if ! command -v unsquashfs &>/dev/null; then
+    error "The 'unsquashfs' tool is not installed. Please install it to continue (e.g., install the 'squashfs-tools' package)."
+    exit 1
   fi
-  new_rootfs_img="${WORK_DIR}/new_rootfs.img"
 
-  info "Creating new ext4 image of size ${size_desc}..."
-  truncate -s "${image_size}" "${new_rootfs_img}"
-  mkfs.ext4 -F "${new_rootfs_img}" &>/dev/null
+  if ! command -v mksquashfs &>/dev/null; then
+    error "The 'mksquashfs' tool is not installed. Please install it to continue (e.g., install the 'squashfs-tools' package)."
+    exit 1
+  fi
 
-  info "Mounting new rootfs image (read-write)..."
-  mount -o loop,rw "${new_rootfs_img}" "${ROOTFS_MOUNT_POINT}"
-
-  info "Copying content from original image..."
-  cp -a "${ORIG_ROOTFS_MOUNT_POINT}/." "${ROOTFS_MOUNT_POINT}/"
-
-  umount "${ORIG_ROOTFS_MOUNT_POINT}"
-
-  info "Replacing old rootfs image file with the new one..."
-  mv "${new_rootfs_img}" "${ROOTFS_IMG_PATH}"
-else
-  info "Mounting ${ROOTFS_IMG_PATH} to ${ROOTFS_MOUNT_POINT} (read-write)..."
-  mount -o loop,rw "${ROOTFS_IMG_PATH}" "${ROOTFS_MOUNT_POINT}"
-fi
-
-# Perform copy operations if requested
-if [[ ${#COPY_OPS[@]} -gt 0 ]]; then
-  info "Performing copy operations..."
-  for ((i = 0; i < ${#COPY_OPS[@]}; i += 2)); do
-    local_path="${COPY_OPS[i]}"
-    image_path="${COPY_OPS[i + 1]}"
-    dest_path="${ROOTFS_MOUNT_POINT}${image_path}"
-
-    if [[ ! -e "$local_path" ]]; then
-      error "Local path for --copy not found: $local_path"
+  if [[ "$REBUILD_ROOTFS" == "true" ]]; then
+    if ! command -v mkfs.ext4 &>/dev/null; then
+      error "The 'mkfs.ext4' tool is not installed. Please install it to continue (e.g., 'e2fsprogs' package)."
       exit 1
     fi
-    info "Copying '${local_path}' to '${dest_path}'..."
-    # Ensure destination directory exists if we are copying a file into a new dir
-    mkdir -p "$(dirname "${dest_path}")"
-    cp "${local_path}" "${dest_path}"
-  done
-fi
+    if ! command -v truncate &>/dev/null; then
+      error "The 'truncate' tool is not installed. Please install it to continue (e.g., 'coreutils' package)."
+      exit 1
+    fi
+  fi
 
-# Run a command if requested
-if [[ -n "$RUN_COMMAND" ]]; then
-  setup_chroot_env
+  EXTRACTED_SQUASHFS_IMG="${WORK_DIR}/squashfs.img"
+  SQUASHFS_CONTENT_DIR="${WORK_DIR}/squashfs_content"
 
-  info "Running command in chroot: ${RUN_COMMAND}"
-  # Run command, capturing exit code. `|| true` prevents `set -e` from exiting the script.
-  chroot "${ROOTFS_MOUNT_POINT}" /bin/bash -c "${RUN_COMMAND}" || true
-  RUN_EXIT_CODE=$?
+  mkdir -p "${SQUASHFS_CONTENT_DIR}" "${ROOTFS_MOUNT_POINT}"
 
-  teardown_chroot_env
+  info "Extracting ${SQUASHFS_IMG_PATH_IN_ISO} from ${ISO_FILE}..."
+  xorriso -osirrox on -indev "${ISO_FILE}" -extract "${SQUASHFS_IMG_PATH_IN_ISO}" "${EXTRACTED_SQUASHFS_IMG}" &>/dev/null
 
-  if [[ $RUN_EXIT_CODE -ne 0 ]]; then
-    error "Command failed with exit code ${RUN_EXIT_CODE}. Discarding changes."
+  info "Unsquashing ${EXTRACTED_SQUASHFS_IMG} image..."
+  unsquashfs -d "${SQUASHFS_CONTENT_DIR}" "${EXTRACTED_SQUASHFS_IMG}" &>/dev/null
+
+  ROOTFS_IMG_PATH="${SQUASHFS_CONTENT_DIR}${ROOTFS_IMG_PATH_IN_SQUASHFS}"
+  if [[ ! -f "$ROOTFS_IMG_PATH" ]]; then
+    error "${ROOTFS_IMG_PATH} not found inside the squashfs image."
     exit 1
   fi
-fi
 
-if [[ "$INTERACTIVE_SHELL" == "true" || "$DEFAULT_ACTION" == "true" ]]; then
-  setup_chroot_env
+  if [[ "$REBUILD_ROOTFS" == "true" ]]; then
+    info "Rebuilding rootfs image..."
+    ORIG_ROOTFS_MOUNT_POINT="${WORK_DIR}/orig_rootfs_mount"
+    mkdir -p "${ORIG_ROOTFS_MOUNT_POINT}"
 
-  echo
-  success "Chroot environment ready at ${ROOTFS_MOUNT_POINT}"
-  echo
-  info "Entering shell. Make your changes inside the chroot."
-  info "To SAVE changes and repackage the ISO, exit with: exit 0"
-  info "To DISCARD changes, exit with any other code (e.g., 'exit 1' or Ctrl+D)."
+    info "Mounting original rootfs image (read-only)..."
+    mount -o loop,ro "${ROOTFS_IMG_PATH}" "${ORIG_ROOTFS_MOUNT_POINT}"
 
-  # Run shell, capturing exit code. `|| true` prevents `set -e` from exiting the script.
-  chroot "${ROOTFS_MOUNT_POINT}" /bin/bash || true
-  CHROOT_EXIT_CODE=$?
+    image_size=""
+    local size_desc
+    if [[ -n "$NEW_ROOTFS_SIZE" ]]; then
+      image_size="$NEW_ROOTFS_SIZE"
+      size_desc="$NEW_ROOTFS_SIZE"
+    else
+      image_size=$(stat -c %s "${ROOTFS_IMG_PATH}")
+      size_desc="${image_size} bytes (original size)"
+    fi
+    new_rootfs_img="${WORK_DIR}/new_rootfs.img"
 
-  teardown_chroot_env
+    info "Creating new ext4 image of size ${size_desc}..."
+    truncate -s "${image_size}" "${new_rootfs_img}"
+    mkfs.ext4 -F "${new_rootfs_img}" &>/dev/null
 
-  if [[ $CHROOT_EXIT_CODE -ne 0 ]]; then
-    error "Shell exited with code ${CHROOT_EXIT_CODE}. Discarding changes."
-    exit 1
+    info "Mounting new rootfs image (read-write)..."
+    mount -o loop,rw "${new_rootfs_img}" "${ROOTFS_MOUNT_POINT}"
+
+    info "Copying content from original image..."
+    cp -a "${ORIG_ROOTFS_MOUNT_POINT}/." "${ROOTFS_MOUNT_POINT}/"
+
+    umount "${ORIG_ROOTFS_MOUNT_POINT}"
+
+    info "Replacing old rootfs image file with the new one..."
+    mv "${new_rootfs_img}" "${ROOTFS_IMG_PATH}"
+  else
+    info "Mounting ${ROOTFS_IMG_PATH} to ${ROOTFS_MOUNT_POINT} (read-write)..."
+    mount -o loop,rw "${ROOTFS_IMG_PATH}" "${ROOTFS_MOUNT_POINT}"
+  fi
+
+  # Perform copy operations if requested
+  if [[ ${#COPY_OPS[@]} -gt 0 ]]; then
+    info "Performing copy operations..."
+    for ((i = 0; i < ${#COPY_OPS[@]}; i += 2)); do
+      local_path="${COPY_OPS[i]}"
+      image_path="${COPY_OPS[i + 1]}"
+      dest_path="${ROOTFS_MOUNT_POINT}${image_path}"
+
+      if [[ ! -e "$local_path" ]]; then
+        error "Local path for --copy not found: $local_path"
+        exit 1
+      fi
+      info "Copying ${local_path} to (root)${image_path}..."
+      # Ensure destination directory exists if we are copying a file into a new dir
+      mkdir -p "$(dirname "${dest_path}")"
+      cp "${local_path}" "${dest_path}"
+    done
+  fi
+
+  # Run a command if requested
+  if [[ -n "$RUN_COMMAND" ]]; then
+    setup_chroot_env
+
+    info "Running command in chroot: ${RUN_COMMAND}"
+    # Run command, capturing exit code. `|| true` prevents `set -e` from exiting the script.
+    chroot "${ROOTFS_MOUNT_POINT}" /bin/bash -c "${RUN_COMMAND}" || true
+    RUN_EXIT_CODE=$?
+
+    teardown_chroot_env
+
+    if [[ $RUN_EXIT_CODE -ne 0 ]]; then
+      error "Command failed with exit code ${RUN_EXIT_CODE}. Discarding changes."
+      exit 1
+    fi
+  fi
+
+  if [[ "$INTERACTIVE_SHELL" == "true" || "$DEFAULT_ACTION" == "true" ]]; then
+    setup_chroot_env
+
+    echo
+    success "Chroot environment ready at ${ROOTFS_MOUNT_POINT}"
+    echo
+    info "Entering shell. Make your changes inside the chroot."
+    info "To SAVE changes and repackage the ISO, exit with: exit 0"
+    info "To DISCARD changes, exit with any other code (e.g., 'exit 1' or Ctrl+D)."
+
+    # Run shell, capturing exit code. `|| true` prevents `set -e` from exiting the script.
+    chroot "${ROOTFS_MOUNT_POINT}" /bin/bash || true
+    CHROOT_EXIT_CODE=$?
+
+    teardown_chroot_env
+
+    if [[ $CHROOT_EXIT_CODE -ne 0 ]]; then
+      error "Shell exited with code ${CHROOT_EXIT_CODE}. Discarding changes."
+      exit 1
+    fi
   fi
 fi
 
@@ -476,7 +482,7 @@ if [[ -n "$GRUB_APPEND_OPTS" || -n "$GRUB_UPDATE_FILE" || "$GRUB_INTERACTIVE" ==
 fi
 
 # Repackage if any action was performed and succeeded.
-if [[ "$DO_ROOTFS_ACTIONS" == "true" || "$DO_GRUB_ACTIONS" == "true" ]]; then
+if [[ "$DO_ROOTFS_ACTIONS" == "true" || "$DO_GRUB_ACTIONS" == "true" || ${#COPY_ISO_OPS[@]} -gt 0 ]]; then
   success "Changes succeeded, creating a new ISO..."
 
   XORRISO_ARGS=("-indev" "${ISO_FILE}" "-outdev" "${NEW_ISO_FILENAME}")
@@ -495,7 +501,7 @@ if [[ "$DO_ROOTFS_ACTIONS" == "true" || "$DO_GRUB_ACTIONS" == "true" ]]; then
   if [[ ${#COPY_ISO_OPS[@]} -gt 0 ]]; then
     for ((i = 0; i < ${#COPY_ISO_OPS[@]}; i += 2)); do
       local_path="${COPY_ISO_OPS[i]}"
-      iso_path="${COPY_ISO_OPS[i+1]}"
+      iso_path="${COPY_ISO_OPS[i + 1]}"
       info "Mapping local file ${local_path} to ${iso_path} in new ISO..."
       XORRISO_ARGS+=("-map" "${local_path}" "${iso_path}")
     done

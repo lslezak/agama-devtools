@@ -1,10 +1,10 @@
 # Agama ISO image tools
 
-This directory contains helper scripts for inspecting and modifying Agama installation ISO images.
+This directory contains a helper script for inspecting and modifying Agama installation ISO images.
 
-> [!WARNING] 
-> *These scripts build a new modified ISO file, there is not support for using the modified
-installer! Use at your own risk!*
+> [!WARNING]
+> *The script builds a new modified ISO file, there is no support for using the modified
+> installer! Use at your own risk!*
 
 ## `iso-edit-live-root.sh`
 
@@ -53,7 +53,7 @@ sudo ./iso-edit-live-root.sh --chroot-run "zypper -n in htop" /path/to/original.
 # Copy a file and then enter an interactive shell to verify
 sudo ./iso-edit-live-root.sh --copy-root ./debug.conf /etc/debug.conf --chroot-shell /path/to/original.iso
 
-# Set the default boot menu entry to the second menu item (installation)
+# Set the default boot menu entry to installation
 sudo ./iso-edit-live-root.sh --grub-default 1 /path/to/original.iso
 ```
 
@@ -96,9 +96,10 @@ sudo ./iso-edit-live-root.sh --copy-root ./agama/web/dist /usr/share/agama/web_u
 sudo ./iso-edit-live-root.sh --copy-root ./agama-web-ui.noarch.rpm /packages --chroot-run "zypper -n in /packages/agama-web-ui.noarch.rpm" original.iso
 ```
 
-When using an RPM package it can be installed also as an self-update. The difference is that in that
-case it would be installed at every boot again and again. See the description
-[below](#adding-self-update-repository).
+When using an RPM package it can be installed also as an self-update or driver update (DUD). The
+difference is that in that case it would be installed at every boot again and again. See the
+description [self-update](#adding-self-update-repository) and [driver
+update](#adding-driver-update-dud) sections below for more details.
 
 ### Setting default hostname
 
@@ -150,9 +151,14 @@ Then you can import the certificate to your web browser or use it with curl:
 curl --cacert cert.pem https://agama.local
 ```
 
-If you do not have a certificate you can generate a self-signed certificate using the 
-[create-self-signed-cert.sh](../../network/https-server/create-self-signed-cert.sh) script or 
-generate it manually with this command:
+If you do not have a certificate you can generate a self-signed certificate using the
+[create-self-signed-cert.sh](../../network/https-server/create-self-signed-cert.sh) script:
+
+```sh
+./create-self-signed-cert.sh --name agama.local
+```
+
+or you can generate it manually with this command:
 
 ```sh
 openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes
@@ -167,12 +173,16 @@ and add a boot option pointing to it.
 ./iso-edit-live-root.sh --copy-iso repository /repository --grub-append "inst.install_url=dir:/run/initramfs/live/repository" original.iso
 ```
 
+For testing without installing the packages you can copy only the repository metadata located in the
+`/repodata` subdirectory. See the details in the next section.
+
 ### Making an offline installation medium
 
 To add a full package repository to the installation medium download the needed repository locally
 into the `repository` subdirectory and then run this command:
 
 ```sh
+./iso-edit-live-root.sh --copy-iso repository /install original.iso
 ```
 
 You do not have to download all needed packaged if you want to test something in the installer
@@ -188,7 +198,11 @@ To provide additional drivers during installation, you can add a Driver Update D
 the ISO and point to it with the dud boot parameter.
 
 ```sh
-./iso-edit-live-root.sh --copy-iso ./my-dud /dud --grub-append "inst.dud=iso:///dud" original.iso
+# DUD archive created by `mkdud` tool
+./iso-edit-live-root.sh --copy-iso ./update.dud /dud/update.dud --grub-append "inst.dud=file:/run/initramfs/live/dud/update.dud" original.iso
+
+# RPM package as DUD
+./iso-edit-live-root.sh --copy-iso ./package.rpm /dud/package.rpm --grub-append "inst.dud=file:/run/initramfs/live/dud/package.rpm" original.iso
 ```
 
 ### Adding self-update repository
@@ -197,7 +211,8 @@ To update the installer itself before the installation starts, you can add a sel
 to the ISO and specify it with the self_update boot parameter.
 
 ```sh
-./iso-edit-live-root.sh --copy-iso ./installer-updates /installer-updates --grub-append "self_update=iso:///installer-updates" original.iso
+# the dvd:/ URL unfortunately won't work when booting from USB flash disk :-/
+./iso-edit-live-root.sh --copy-iso ./updates /updates --grub-append "inst.self_update=dvd:/updates" original.iso
 ```
 
 ### Installing debugging tools
