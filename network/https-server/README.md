@@ -9,8 +9,16 @@ First run the [create-self-signed-cert.sh](./create-self-signed-cert.sh) script
 which creates a self-signed SSL certificate in file `cert.pem` and its private
 key in file `key.pem`.
 
+The script automatically adds all local IP addresses and host names to the
+certificate from the current machine. If you want to use different values use
+the `--ip <ip_address>` and `--name <dns_name>` script options.
+
 Alternatively you can use the `/usr/sbin/check-create-certificate` script from
-the "check-create-certificate" RPM package.
+the "check-create-certificate" RPM package or generate the certificate manually:
+
+```sh
+openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes
+```
 
 ## HTTPS server
 

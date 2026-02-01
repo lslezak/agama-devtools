@@ -19,7 +19,8 @@ It automates the following process:
       installer's root filesystem.
     - **Copy Mode (`--copy-root`):** Copies local files/directories into the root filesystem.
     - **Run Mode (`--chroot-run`):** Executes a command within the `chroot` environment.
-    - **ISO File Copy (`--copy-iso`):** Copies local files/directories to any path within the ISO filesystem.
+    - **ISO File Copy (`--copy-iso`):** Copies local files/directories to any path within the ISO
+      filesystem.
     - **Grub Editing**: Includes options (`--grub-default`, `--grub-append`, `--grub-interactive`)
       to modify the `grub.cfg` bootloader configuration. A generic `--extract` option can be used to
       extract any file for inspection.
@@ -82,6 +83,23 @@ in the installer, you can append the `inst.self_update=0` boot option.
 See the [Agama boot options](https://agama-project.github.io/docs/user/reference/boot_options)
 documentation.
 
+### Replacing installer component
+
+To test a patched version of an installer component, you can replace the needed parts directly.
+You can either replace the files from the locally built sources or install an updated RPM package.
+
+```sh
+# replace the web frontend from sources
+sudo ./iso-edit-live-root.sh --copy-root ./agama/web/dist /usr/share/agama/web_ui original.iso
+
+# replace the web frontend from RPM package
+sudo ./iso-edit-live-root.sh --copy-root ./agama-web-ui.noarch.rpm /packages --chroot-run "zypper -n in /packages/agama-web-ui.noarch.rpm" original.iso
+```
+
+When using an RPM package it can be installed also as an self-update. The difference is that in that
+case it would be installed at every boot again and again. See the description
+[below](#adding-self-update-repository).
+
 ### Setting default hostname
 
 You can pre-configure the hostname for the running installer using the `hostname` boot option.
@@ -132,6 +150,14 @@ Then you can import the certificate to your web browser or use it with curl:
 curl --cacert cert.pem https://agama.local
 ```
 
+If you do not have a certificate you can generate a self-signed certificate using the 
+[create-self-signed-cert.sh](../../network/https-server/create-self-signed-cert.sh) script or 
+generate it manually with this command:
+
+```sh
+openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes
+```
+
 ### Adding local repository
 
 To add a local repository to the ISO image, you need to copy the repository files into the ISO image
@@ -158,4 +184,35 @@ metadata from a remote repository.
 
 ### Adding driver update (DUD)
 
+To provide additional drivers during installation, you can add a Driver Update Disk (DUD) file to
+the ISO and point to it with the dud boot parameter.
+
+```sh
+./iso-edit-live-root.sh --copy-iso ./my-dud /dud --grub-append "inst.dud=iso:///dud" original.iso
+```
+
 ### Adding self-update repository
+
+To update the installer itself before the installation starts, you can add a self-update +repository
+to the ISO and specify it with the self_update boot parameter.
+
+```sh
+./iso-edit-live-root.sh --copy-iso ./installer-updates /installer-updates --grub-append "self_update=iso:///installer-updates" original.iso
+```
+
+### Installing debugging tools
+
+If you need to debug the installer, you can add tools like `strace` or `tcpdump`.
+
+```sh
+sudo ./iso-edit-live-root.sh --chroot-run "zypper -n in strace tcpdump" original.iso
+```
+
+### Enabling serial console
+
+For debugging on virtual machines or physical hardware with a serial port, you can enable a serial
+console.
+
+```sh
+./iso-edit-live-root.sh --grub-append "console=ttyS0,115200" original.iso
+```
