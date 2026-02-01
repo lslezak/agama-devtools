@@ -1,6 +1,7 @@
 # Agama ISO image tools
 
-This directory contains a helper script for inspecting and modifying Agama installation ISO images.
+This directory contains a helper script for inspecting and modifying the Agama installation ISO
+images.
 
 > [!WARNING]
 > *The script builds a new modified ISO file, there is no support for using the modified
@@ -36,7 +37,9 @@ It automates the following process:
 6. If no changes are to be saved, all temporary files are discarded.
 
 This is useful for debugging or customizing the installer environment. The script requires root
-privileges for modifying the root filesystem image.
+privileges for modifying the root filesystem image. For modifying only the ISO image content
+(updating the boot menu, adding packages to the medium, updating kernel/initrd) the root permissions
+are not required.
 
 ### Usage
 
@@ -209,12 +212,16 @@ the ISO and point to it with the dud boot parameter.
 
 ### Adding self-update repository
 
-To update the installer itself before the installation starts, you can add a self-update +repository
-to the ISO and specify it with the self_update boot parameter.
+To update the installer itself before the installation starts, you can add a self-update repository
+to the ISO and specify it with the `inst.self_update` boot parameter. Refer to the device using the
+device label, that works for both DVD and USB media.
 
 ```sh
-# the dvd:/ URL unfortunately won't work when booting from USB flash disk :-/
-./iso-edit-live-root.sh --copy-iso ./updates /updates --grub-append "inst.self_update=dvd:/updates" original.iso
+# get the volume ID which is used as the disk label in booted system
+xorriso -indev original.iso -pvd_info 2> /dev/null | grep "Volume Id"
+
+# use hd: URL can refer to a "by-label" device label, the label is the volume ID
+./iso-edit-live-root.sh --copy-iso ./updates /updates --grub-append "inst.self_update=hd:/updates?device=/dev/disk/by-label/Install-openSUSE-x86_64" original.iso
 ```
 
 ### Installing debugging tools
@@ -232,4 +239,15 @@ console.
 
 ```sh
 ./iso-edit-live-root.sh --grub-append "console=ttyS0,115200" original.iso
+```
+
+### Updating kernel and initrd
+
+It is possible to replace also the Linux kernel and the initrd image.
+
+*Note: You have to use a compatible kernel and initrd otherwise the system will not boot or the
+installer will not start properly!*
+
+```sh
+./iso-edit-live-root.sh --copy-iso kernel /boot/x86_64/loader/linux --copy-iso initrd /boot/x86_64/loader/initrd  original.iso
 ```
