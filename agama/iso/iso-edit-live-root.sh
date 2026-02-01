@@ -56,22 +56,22 @@ usage() {
   echo "re-packages it into a new ISO if changes are saved."
   echo ""
   echo "Options:"
-  echo "  -h, --help          Show this help message and exit."
-  echo "  --copy <src> <dest> Copy local file/dir to the rootfs. Can be used multiple times."
-  echo "  --run <command>     Execute a command in the chroot after copying files."
-  echo "                      The script will repackage on success."
-  echo "  --interactive       Enter an interactive shell. Useful with --copy to inspect"
-  echo "                      changes before repackaging. Implied if --copy is not used."
+  echo "  -h, --help           Show this help message and exit."
+  echo "  --extract <iso_path> <local_path>  Extract a file from the ISO and exit."
+  echo "  --copy-iso <local_path> <iso_path>   Copy a local file/dir to the ISO. Can be used multiple times."
+  echo "  --copy-root <local_path> <root_path> Copy local file/dir to the rootfs. Can be used multiple times."
+  echo "  --chroot-run <command>               Execute a command in the chroot after copying files."
+  echo "                                       The script will repackage on success."
+  echo "  --chroot-shell                       Enter an interactive shell. Useful with --copy-root to inspect"
+  echo "                                       changes before repackaging. Implied if no other action is specified."
   echo "  --rebuild           Rebuild the rootfs ext4 image from scratch to remove deleted data."
   echo "  --size <size>       Create a new rootfs image of <size> (e.g., 4G)."
   echo "                      This option implies --rebuild."
-  echo "  --grub-default <N>    Set the default grub menu entry to N."
+  echo "  --grub-default <N>    Set the default grub menu entry to N (must be a number)."
   echo "  --grub-append <opts> Append kernel options to 'Install' menu entries in grub.cfg."
-  echo "  --grub-extract [path] Extract grub.cfg to [path] (default: ./grub.cfg) and exit."
-  echo "  --grub-update <file> Update grub.cfg from a local file."
-  echo "  --grub-interactive  Interactively edit grub.cfg."
+  echo "  --grub-interactive  Interactively edit grub.cfg using editor."
   echo "  --output <file>     Specify the output ISO file name."
-  echo "                      Default: <iso_file>-edited.iso"
+  echo "                      Default: input file with '*-edited.iso' suffix."
   echo "Requires root privileges to perform mount operations."
   exit 1
 }
@@ -111,7 +111,6 @@ teardown_chroot_env() {
     current_checksum=$(sha256sum "${resolv_conf_in_chroot}" | awk '{print $1}')
 
     if [[ "$current_checksum" == "$COPIED_RESOLV_CONF_CHECKSUM" ]]; then
-      info "Restoring original resolv.conf state in the image."
       rm "${resolv_conf_in_chroot}"
       if [[ -e "${resolv_conf_in_chroot}.orig" ]]; then
         mv "${resolv_conf_in_chroot}.orig" "${resolv_conf_in_chroot}"
@@ -158,7 +157,9 @@ GRUB_DEFAULT_ITEM=""
 GRUB_APPEND_OPTS=""
 GRUB_UPDATE_FILE=""
 GRUB_INTERACTIVE=false
-GRUB_EXTRACT_PATH=""
+COPY_ISO_OPS=()
+EXTRACT_ISO_PATH=""
+EXTRACT_LOCAL_PATH=""
 POSITIONAL_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -173,30 +174,30 @@ while [[ $# -gt 0 ]]; do
     OUTPUT_ISO="$2"
     shift 2
     ;;
-  --copy)
+  --copy-root)
     if [[ -z "${2:-}" || "$2" =~ ^- || -z "${3:-}" || "$3" =~ ^- ]]; then
-      error "--copy requires a <local_path> and an <image_path>."
+      error "--copy-root requires a <local_path> and an <image_path>."
       usage
     fi
     COPY_OPS+=("$2") # local_path
     COPY_OPS+=("$3") # image_path
 
     if [[ ! "$3" =~ ^/ ]]; then
-      error "Image path for --copy must be an absolute path: $3"
+      error "Image path for --copy-root must be an absolute path: $3"
       exit 1
     fi
 
     shift 3
     ;;
-  --run)
+  --chroot-run)
     if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-      error "--run requires a command string."
+      error "--chroot-run requires a command string."
       usage
     fi
     RUN_COMMAND="$2"
     shift 2
     ;;
-  --interactive)
+  --chroot-shell)
     INTERACTIVE_SHELL=true
     shift
     ;;
@@ -229,25 +230,39 @@ while [[ $# -gt 0 ]]; do
     GRUB_APPEND_OPTS="$2"
     shift 2
     ;;
-  --grub-extract)
-    # handle optional path
-    if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
-      GRUB_EXTRACT_PATH="$2"
-      shift
-    else
-      GRUB_EXTRACT_PATH="grub.cfg"
-    fi
-    shift
-    ;;
-  --grub-update)
-    if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-      error "--grub-update requires a source file."
+  --copy-iso)
+    if [[ -z "${2:-}" || "$2" =~ ^- || -z "${3:-}" || "$3" =~ ^- ]]; then
+      error "--copy-iso requires a <local_path> and an <iso_path>."
       usage
     fi
-    GRUB_UPDATE_FILE="$2"
-    shift 2
+    local_path="$2"
+    iso_path="$3"
+    if [[ "$iso_path" == "$GRUB_CFG_PATH_IN_ISO" ]]; then
+      if [[ -n "$GRUB_UPDATE_FILE" ]]; then
+        error "Cannot specify multiple sources for ${GRUB_CFG_PATH_IN_ISO}."
+        exit 1
+      fi
+      GRUB_UPDATE_FILE="$local_path"
+    else
+      COPY_ISO_OPS+=("$local_path")
+      COPY_ISO_OPS+=("$iso_path")
+    fi
+    shift 3
+    ;;
+  --extract)
+    if [[ -z "${2:-}" || "$2" =~ ^- || -z "${3:-}" || "$3" =~ ^- ]]; then
+      error "--extract requires an <iso_path> and a <local_path>."
+      usage
+    fi
+    EXTRACT_ISO_PATH="$2"
+    EXTRACT_LOCAL_PATH="$3"
+    shift 3
     ;;
   --grub-interactive)
+		if ! command -v "${EDITOR}" &>/dev/null; then
+			error "Editor '${EDITOR}' not found."
+			exit 1
+		fi
     GRUB_INTERACTIVE=true
     shift
     ;;
@@ -273,23 +288,23 @@ if [[ ! -f "$ISO_FILE" ]]; then
   exit 1
 fi
 
-# Handle grub-extract as an exclusive action
-if [[ -n "$GRUB_EXTRACT_PATH" ]]; then
-  if [[ ${#COPY_OPS[@]} -gt 0 || -n "$RUN_COMMAND" || "$INTERACTIVE_SHELL" == "true" || -n "$GRUB_APPEND_OPTS" || -n "$GRUB_UPDATE_FILE" || "$GRUB_INTERACTIVE" == "true" || "$REBUILD_ROOTFS" == "true" || -n "$GRUB_DEFAULT_ITEM" ]]; then
-    error "--grub-extract cannot be combined with other modification options."
+# Handle extract as an exclusive action
+if [[ -n "$EXTRACT_ISO_PATH" ]]; then
+  if [[ ${#COPY_OPS[@]} -gt 0 || -n "$RUN_COMMAND" || "$INTERACTIVE_SHELL" == "true" || -n "$GRUB_APPEND_OPTS" || -n "$GRUB_UPDATE_FILE" || "$GRUB_INTERACTIVE" == "true" || "$REBUILD_ROOTFS" == "true" || -n "$GRUB_DEFAULT_ITEM" || ${#COPY_ISO_OPS[@]} -gt 0 ]]; then
+    error "--extract cannot be combined with other modification options."
     exit 1
   fi
-  info "Extracting ${GRUB_CFG_PATH_IN_ISO} to ${GRUB_EXTRACT_PATH}..."
-  if ! xorriso -osirrox on -indev "${ISO_FILE}" -extract "${GRUB_CFG_PATH_IN_ISO}" "${GRUB_EXTRACT_PATH}" &>/dev/null; then
-    error "Failed to extract ${GRUB_CFG_PATH_IN_ISO}. Please check if the path is correct for your ISO file."
+  info "Extracting ${EXTRACT_ISO_PATH} to ${EXTRACT_LOCAL_PATH}..."
+  if ! xorriso -osirrox on -indev "${ISO_FILE}" -extract "${EXTRACT_ISO_PATH}" "${EXTRACT_LOCAL_PATH}" &>/dev/null; then
+    error "Failed to extract ${EXTRACT_ISO_PATH}. Please check if the path is correct for your ISO file."
     exit 1
   fi
-  success "Successfully extracted ${GRUB_CFG_PATH_IN_ISO} to ${GRUB_EXTRACT_PATH}"
+  success "Successfully extracted ${EXTRACT_ISO_PATH} to ${EXTRACT_LOCAL_PATH}"
   exit 0
 fi
 
 DEFAULT_ACTION=false
-if [[ ${#COPY_OPS[@]} -eq 0 && -z "$RUN_COMMAND" && "$INTERACTIVE_SHELL" == "false" && -z "$GRUB_APPEND_OPTS" && -z "$GRUB_UPDATE_FILE" && "$GRUB_INTERACTIVE" == "false" && -z "$GRUB_DEFAULT_ITEM" ]]; then
+if [[ ${#COPY_OPS[@]} -eq 0 && -z "$RUN_COMMAND" && "$INTERACTIVE_SHELL" == "false" && -z "$GRUB_APPEND_OPTS" && -z "$GRUB_UPDATE_FILE" && "$GRUB_INTERACTIVE" == "false" && -z "$GRUB_DEFAULT_ITEM" && ${#COPY_ISO_OPS[@]} -eq 0 ]]; then
   DEFAULT_ACTION=true
 fi
 
@@ -412,7 +427,7 @@ if [[ ${#COPY_OPS[@]} -gt 0 ]]; then
     info "Copying '${local_path}' to '${dest_path}'..."
     # Ensure destination directory exists if we are copying a file into a new dir
     mkdir -p "$(dirname "${dest_path}")"
-    cp -a "${local_path}" "${dest_path}"
+    cp "${local_path}" "${dest_path}"
   done
 fi
 
@@ -477,6 +492,15 @@ if [[ "$DO_ROOTFS_ACTIONS" == "true" || "$DO_GRUB_ACTIONS" == "true" ]]; then
     XORRISO_ARGS+=("-map" "${NEW_SQUASHFS_IMG}" "${SQUASHFS_IMG_PATH_IN_ISO}")
   fi
 
+  if [[ ${#COPY_ISO_OPS[@]} -gt 0 ]]; then
+    for ((i = 0; i < ${#COPY_ISO_OPS[@]}; i += 2)); do
+      local_path="${COPY_ISO_OPS[i]}"
+      iso_path="${COPY_ISO_OPS[i+1]}"
+      info "Mapping local file ${local_path} to ${iso_path} in new ISO..."
+      XORRISO_ARGS+=("-map" "${local_path}" "${iso_path}")
+    done
+  fi
+
   if [[ "$DO_GRUB_ACTIONS" == "true" ]]; then
     LOCAL_GRUB_CFG="${WORK_DIR}/grub.cfg"
     info "Extracting ${GRUB_CFG_PATH_IN_ISO} from ${ISO_FILE}..."
@@ -514,10 +538,6 @@ if [[ "$DO_ROOTFS_ACTIONS" == "true" || "$DO_GRUB_ACTIONS" == "true" ]]; then
     fi
 
     if [[ "$GRUB_INTERACTIVE" == "true" ]]; then
-      if ! command -v "${EDITOR}" &>/dev/null; then
-        error "Editor '${EDITOR}' not found."
-        exit 1
-      fi
       info "Opening grub.cfg for interactive editing with ${EDITOR}..."
       "${EDITOR}" "${LOCAL_GRUB_CFG}"
     fi
