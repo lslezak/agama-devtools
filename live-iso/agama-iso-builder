@@ -51,7 +51,7 @@ EDITOR="${EDITOR:-vim}"
 
 usage() {
   echo "Usage: $0 [options] <iso_file>"
-	echo ""
+  echo ""
   echo "Allows modifying the Agama installation ISO images."
   echo ""
   echo "Options:"
@@ -142,6 +142,206 @@ cleanup() {
   fi
 }
 
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    -h | --help)
+      usage
+      ;;
+    --output)
+      if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+        error "--output requires a file path."
+        usage
+      fi
+      OUTPUT_ISO="$2"
+      shift 2
+      ;;
+    --copy-root)
+      if [[ -z "${2:-}" || "$2" =~ ^- || -z "${3:-}" || "$3" =~ ^- ]]; then
+        error "--copy-root requires a <local_path> and an <image_path>."
+        usage
+      fi
+      COPY_OPS+=("$2") # local_path
+      COPY_OPS+=("$3") # image_path
+
+      if [[ ! "$3" =~ ^/ ]]; then
+        error "Image path for --copy-root must be an absolute path: $3"
+        exit 1
+      fi
+
+      shift 3
+      ;;
+    --chroot-run)
+      if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+        error "--chroot-run requires a command string."
+        usage
+      fi
+      RUN_COMMAND="$2"
+      shift 2
+      ;;
+    --chroot-shell)
+      INTERACTIVE_SHELL=true
+      shift
+      ;;
+    --rebuild)
+      REBUILD_ROOTFS=true
+      shift
+      ;;
+    --size)
+      if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+        error "--size requires a size argument (e.g., 4G)."
+        usage
+      fi
+      NEW_ROOTFS_SIZE="$2"
+      REBUILD_ROOTFS=true
+      shift 2
+      ;;
+    --grub-default)
+      if [[ -z "${2:-}" || "$2" =~ ^- || ! "$2" =~ ^[0-9]+$ ]]; then
+        error "--grub-default requires a non-negative number."
+        usage
+      fi
+      GRUB_DEFAULT_ITEM="$2"
+      shift 2
+      ;;
+    --grub-timeout)
+      if [[ -z "${2:-}" || "$2" =~ ^- || ! "$2" =~ ^[0-9]+$ ]]; then
+        error "--grub-timeout requires a non-negative number."
+        usage
+      fi
+      GRUB_TIMEOUT="$2"
+      shift 2
+      ;;
+    --grub-append)
+      if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+        error "--grub-append requires an options string."
+        usage
+      fi
+      GRUB_APPEND_OPTS="$2"
+      shift 2
+      ;;
+    --copy-iso)
+      if [[ -z "${2:-}" || "$2" =~ ^- || -z "${3:-}" || "$3" =~ ^- ]]; then
+        error "--copy-iso requires a <local_path> and an <iso_path>."
+        usage
+      fi
+      local_path="$2"
+      iso_path="$3"
+      if [[ "$iso_path" == "$GRUB_CFG_PATH_IN_ISO" ]]; then
+        if [[ -n "$GRUB_UPDATE_FILE" ]]; then
+          error "Cannot specify multiple sources for ${GRUB_CFG_PATH_IN_ISO}."
+          exit 1
+        fi
+        GRUB_UPDATE_FILE="$local_path"
+      else
+        COPY_ISO_OPS+=("$local_path")
+        COPY_ISO_OPS+=("$iso_path")
+      fi
+      shift 3
+      ;;
+    --extract)
+      if [[ -z "${2:-}" || "$2" =~ ^- || -z "${3:-}" || "$3" =~ ^- ]]; then
+        error "--extract requires an <iso_path> and a <local_path>."
+        usage
+      fi
+      EXTRACT_ISO_PATH="$2"
+      EXTRACT_LOCAL_PATH="$3"
+      shift 3
+      ;;
+    --grub-interactive)
+      if ! command -v "${EDITOR}" &>/dev/null; then
+        error "Editor '${EDITOR}' not found."
+        exit 1
+      fi
+      GRUB_INTERACTIVE=true
+      shift
+      ;;
+    -*)
+      error "Unknown option: $1"
+      usage
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$1")
+      shift
+      ;;
+    esac
+  done
+
+  if [[ "${#POSITIONAL_ARGS[@]}" -ne 1 ]]; then
+    error "Exactly one ISO file must be specified."
+    usage
+  fi
+
+  ISO_FILE="${POSITIONAL_ARGS[0]}"
+  if [[ ! -f "$ISO_FILE" ]]; then
+    error "ISO file not found $ISO_FILE"
+    exit 1
+  fi
+}
+
+check_rootfs_requirements() {
+  if [[ $EUID -ne 0 ]]; then
+    error "Root privileges are required to modify the root filesystem."
+    error "Please run again using 'sudo'."
+    exit 1
+  fi
+
+  if ! command -v unsquashfs &>/dev/null; then
+    error "The 'unsquashfs' tool is not installed. Please install it to continue (e.g., install the 'squashfs-tools' package)."
+    exit 1
+  fi
+
+  if ! command -v mksquashfs &>/dev/null; then
+    error "The 'mksquashfs' tool is not installed. Please install it to continue (e.g., install the 'squashfs-tools' package)."
+    exit 1
+  fi
+
+  if [[ "$REBUILD_ROOTFS" == "true" ]]; then
+    if ! command -v mkfs.ext4 &>/dev/null; then
+      error "The 'mkfs.ext4' tool is not installed. Please install it to continue (e.g., 'e2fsprogs' package)."
+      exit 1
+    fi
+    if ! command -v truncate &>/dev/null; then
+      error "The 'truncate' tool is not installed. Please install it to continue (e.g., 'coreutils' package)."
+      exit 1
+    fi
+  fi
+}
+
+rebuild_rootfs() {
+  info "Rebuilding rootfs image..."
+  ORIG_ROOTFS_MOUNT_POINT="${WORK_DIR}/orig_rootfs_mount"
+  mkdir -p "${ORIG_ROOTFS_MOUNT_POINT}"
+
+  info "Mounting original rootfs image (read-only)..."
+  mount -o loop,ro "${ROOTFS_IMG_PATH}" "${ORIG_ROOTFS_MOUNT_POINT}"
+
+  image_size=""
+  if [[ -n "$NEW_ROOTFS_SIZE" ]]; then
+    image_size="$NEW_ROOTFS_SIZE"
+    size_desc="$NEW_ROOTFS_SIZE"
+  else
+    image_size=$(stat -c %s "${ROOTFS_IMG_PATH}")
+    size_desc="${image_size} bytes (original size)"
+  fi
+  new_rootfs_img="${WORK_DIR}/new_rootfs.img"
+
+  info "Creating new ext4 image of size ${size_desc}..."
+  truncate -s "${image_size}" "${new_rootfs_img}"
+  mkfs.ext4 -F "${new_rootfs_img}" &>/dev/null
+
+  info "Mounting new rootfs image (read-write)..."
+  mount -o loop,rw "${new_rootfs_img}" "${ROOTFS_MOUNT_POINT}"
+
+  info "Copying content from original image..."
+  cp -a "${ORIG_ROOTFS_MOUNT_POINT}/." "${ROOTFS_MOUNT_POINT}/"
+
+  umount "${ORIG_ROOTFS_MOUNT_POINT}"
+
+  info "Replacing old rootfs image file with the new one..."
+  mv "${new_rootfs_img}" "${ROOTFS_IMG_PATH}"
+}
+
 # --- Main Script ---
 
 if [[ $# -eq 0 ]]; then
@@ -165,140 +365,9 @@ COPY_ISO_OPS=()
 EXTRACT_ISO_PATH=""
 EXTRACT_LOCAL_PATH=""
 POSITIONAL_ARGS=()
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-  -h | --help)
-    usage
-    ;;
-  --output)
-    if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-      error "--output requires a file path."
-      usage
-    fi
-    OUTPUT_ISO="$2"
-    shift 2
-    ;;
-  --copy-root)
-    if [[ -z "${2:-}" || "$2" =~ ^- || -z "${3:-}" || "$3" =~ ^- ]]; then
-      error "--copy-root requires a <local_path> and an <image_path>."
-      usage
-    fi
-    COPY_OPS+=("$2") # local_path
-    COPY_OPS+=("$3") # image_path
 
-    if [[ ! "$3" =~ ^/ ]]; then
-      error "Image path for --copy-root must be an absolute path: $3"
-      exit 1
-    fi
-
-    shift 3
-    ;;
-  --chroot-run)
-    if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-      error "--chroot-run requires a command string."
-      usage
-    fi
-    RUN_COMMAND="$2"
-    shift 2
-    ;;
-  --chroot-shell)
-    INTERACTIVE_SHELL=true
-    shift
-    ;;
-  --rebuild)
-    REBUILD_ROOTFS=true
-    shift
-    ;;
-  --size)
-    if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-      error "--size requires a size argument (e.g., 4G)."
-      usage
-    fi
-    NEW_ROOTFS_SIZE="$2"
-    REBUILD_ROOTFS=true
-    shift 2
-    ;;
-  --grub-default)
-    if [[ -z "${2:-}" || "$2" =~ ^- || ! "$2" =~ ^[0-9]+$ ]]; then
-      error "--grub-default requires a non-negative number."
-      usage
-    fi
-    GRUB_DEFAULT_ITEM="$2"
-    shift 2
-    ;;
-  --grub-timeout)
-    if [[ -z "${2:-}" || "$2" =~ ^- || ! "$2" =~ ^[0-9]+$ ]]; then
-      error "--grub-timeout requires a non-negative number."
-      usage
-    fi
-    GRUB_TIMEOUT="$2"
-    shift 2
-    ;;
-  --grub-append)
-    if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-      error "--grub-append requires an options string."
-      usage
-    fi
-    GRUB_APPEND_OPTS="$2"
-    shift 2
-    ;;
-  --copy-iso)
-    if [[ -z "${2:-}" || "$2" =~ ^- || -z "${3:-}" || "$3" =~ ^- ]]; then
-      error "--copy-iso requires a <local_path> and an <iso_path>."
-      usage
-    fi
-    local_path="$2"
-    iso_path="$3"
-    if [[ "$iso_path" == "$GRUB_CFG_PATH_IN_ISO" ]]; then
-      if [[ -n "$GRUB_UPDATE_FILE" ]]; then
-        error "Cannot specify multiple sources for ${GRUB_CFG_PATH_IN_ISO}."
-        exit 1
-      fi
-      GRUB_UPDATE_FILE="$local_path"
-    else
-      COPY_ISO_OPS+=("$local_path")
-      COPY_ISO_OPS+=("$iso_path")
-    fi
-    shift 3
-    ;;
-  --extract)
-    if [[ -z "${2:-}" || "$2" =~ ^- || -z "${3:-}" || "$3" =~ ^- ]]; then
-      error "--extract requires an <iso_path> and a <local_path>."
-      usage
-    fi
-    EXTRACT_ISO_PATH="$2"
-    EXTRACT_LOCAL_PATH="$3"
-    shift 3
-    ;;
-  --grub-interactive)
-    if ! command -v "${EDITOR}" &>/dev/null; then
-      error "Editor '${EDITOR}' not found."
-      exit 1
-    fi
-    GRUB_INTERACTIVE=true
-    shift
-    ;;
-  -*)
-    error "Unknown option: $1"
-    usage
-    ;;
-  *)
-    POSITIONAL_ARGS+=("$1")
-    shift
-    ;;
-  esac
-done
-
-if [[ "${#POSITIONAL_ARGS[@]}" -ne 1 ]]; then
-  error "Exactly one ISO file must be specified."
-  usage
-fi
-
-ISO_FILE="${POSITIONAL_ARGS[0]}"
-if [[ ! -f "$ISO_FILE" ]]; then
-  error "ISO file not found $ISO_FILE"
-  exit 1
-fi
+# Parse command line arguments
+parse_args
 
 # Handle extract as an exclusive action
 if [[ -n "$EXTRACT_ISO_PATH" ]]; then
@@ -325,14 +394,6 @@ if [[ ${#COPY_OPS[@]} -gt 0 || -n "$RUN_COMMAND" || "$INTERACTIVE_SHELL" == "tru
   DO_ROOTFS_ACTIONS=true
 fi
 
-if [[ "$DO_ROOTFS_ACTIONS" == "true" ]]; then
-  if [[ $EUID -ne 0 ]]; then
-    error "Root privileges are required to modify the root filesystem."
-    error "Please run again using 'sudo'."
-    exit 1
-  fi
-fi
-
 if ! command -v xorriso &>/dev/null; then
   error "The 'xorriso' tool is not installed. Please install it to continue."
   exit 1
@@ -350,26 +411,7 @@ trap cleanup EXIT SIGINT SIGTERM
 ROOTFS_MOUNT_POINT="${WORK_DIR}/rootfs_mount"
 
 if [[ "$DO_ROOTFS_ACTIONS" == "true" ]]; then
-  if ! command -v unsquashfs &>/dev/null; then
-    error "The 'unsquashfs' tool is not installed. Please install it to continue (e.g., install the 'squashfs-tools' package)."
-    exit 1
-  fi
-
-  if ! command -v mksquashfs &>/dev/null; then
-    error "The 'mksquashfs' tool is not installed. Please install it to continue (e.g., install the 'squashfs-tools' package)."
-    exit 1
-  fi
-
-  if [[ "$REBUILD_ROOTFS" == "true" ]]; then
-    if ! command -v mkfs.ext4 &>/dev/null; then
-      error "The 'mkfs.ext4' tool is not installed. Please install it to continue (e.g., 'e2fsprogs' package)."
-      exit 1
-    fi
-    if ! command -v truncate &>/dev/null; then
-      error "The 'truncate' tool is not installed. Please install it to continue (e.g., 'coreutils' package)."
-      exit 1
-    fi
-  fi
+  check_rootfs_requirements
 
   EXTRACTED_SQUASHFS_IMG="${WORK_DIR}/squashfs.img"
   SQUASHFS_CONTENT_DIR="${WORK_DIR}/squashfs_content"
@@ -389,37 +431,7 @@ if [[ "$DO_ROOTFS_ACTIONS" == "true" ]]; then
   fi
 
   if [[ "$REBUILD_ROOTFS" == "true" ]]; then
-    info "Rebuilding rootfs image..."
-    ORIG_ROOTFS_MOUNT_POINT="${WORK_DIR}/orig_rootfs_mount"
-    mkdir -p "${ORIG_ROOTFS_MOUNT_POINT}"
-
-    info "Mounting original rootfs image (read-only)..."
-    mount -o loop,ro "${ROOTFS_IMG_PATH}" "${ORIG_ROOTFS_MOUNT_POINT}"
-
-    image_size=""
-    if [[ -n "$NEW_ROOTFS_SIZE" ]]; then
-      image_size="$NEW_ROOTFS_SIZE"
-      size_desc="$NEW_ROOTFS_SIZE"
-    else
-      image_size=$(stat -c %s "${ROOTFS_IMG_PATH}")
-      size_desc="${image_size} bytes (original size)"
-    fi
-    new_rootfs_img="${WORK_DIR}/new_rootfs.img"
-
-    info "Creating new ext4 image of size ${size_desc}..."
-    truncate -s "${image_size}" "${new_rootfs_img}"
-    mkfs.ext4 -F "${new_rootfs_img}" &>/dev/null
-
-    info "Mounting new rootfs image (read-write)..."
-    mount -o loop,rw "${new_rootfs_img}" "${ROOTFS_MOUNT_POINT}"
-
-    info "Copying content from original image..."
-    cp -a "${ORIG_ROOTFS_MOUNT_POINT}/." "${ROOTFS_MOUNT_POINT}/"
-
-    umount "${ORIG_ROOTFS_MOUNT_POINT}"
-
-    info "Replacing old rootfs image file with the new one..."
-    mv "${new_rootfs_img}" "${ROOTFS_IMG_PATH}"
+    rebuild_rootfs
   else
     info "Mounting ${ROOTFS_IMG_PATH} to ${ROOTFS_MOUNT_POINT} (read-write)..."
     mount -o loop,rw "${ROOTFS_IMG_PATH}" "${ROOTFS_MOUNT_POINT}"
