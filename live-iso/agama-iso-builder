@@ -534,6 +534,16 @@ create_new_iso() {
     xorriso_args+=("-map" "${WORK_DIR}/grub.cfg" "${GRUB_CFG_PATH_IN_ISO}")
   fi
 
+  # add builer info file
+  local builder_info="${WORK_DIR}/.info_builder"
+  cat <<EOF >"$builder_info"
+Build date:  $(LC_ALL=C date -u "+%F %T %Z")
+Builder:     $(basename "$0")
+Input ISO:   $(basename "$ISO_FILE")
+EOF
+
+  xorriso_args+=("-map" "${builder_info}" "/LiveOS/.info_builder")
+
   info "Creating new ISO file ${NEW_ISO_FILENAME}..."
   xorriso_args+=("-boot_image" "any" "replay")
   xorriso "${xorriso_args[@]}"
