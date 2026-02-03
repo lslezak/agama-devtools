@@ -402,14 +402,14 @@ apply_rootfs_modifications() {
     setup_chroot_env
 
     info "Running command in chroot: ${RUN_COMMAND}"
-    # Run command, capturing exit code. `|| true` prevents `set -e` from exiting the script.
-    chroot "${ROOTFS_MOUNT_POINT}" /bin/bash -c "${RUN_COMMAND}" || true
-    local run_exit_code=$?
+    # Run command in chroot, `||` prevents `set -e` from exiting the script.
+    local command_exit="0"
+    chroot "${ROOTFS_MOUNT_POINT}" /bin/bash -c "${RUN_COMMAND}" || command_exit=$?
 
     teardown_chroot_env
 
-    if [[ $run_exit_code -ne 0 ]]; then
-      error "Command failed with exit code ${run_exit_code}. Discarding changes."
+    if [[ "$command_exit" != 0 ]]; then
+      error "Command failed with exit code ${command_exit}, discarding changes."
       exit 1
     fi
   fi
@@ -425,13 +425,13 @@ apply_rootfs_modifications() {
     info "To DISCARD changes, exit with any other code: 'exit 1'"
 
     # Run shell, `||` prevents `set -e` from exiting the script.
-    local chroot_failed=""
-    chroot "${ROOTFS_MOUNT_POINT}" || chroot_failed=true
+    local chroot_exit="0"
+    chroot "${ROOTFS_MOUNT_POINT}" || chroot_exit=$?
 
     teardown_chroot_env
 
-    if [[ -n "$chroot_failed" ]]; then
-      error "Chroot shell failed, discarding changes."
+    if [[ "$chroot_exit" != 0 ]]; then
+      error "Chroot shell failed with exit code ${chroot_exit}, discarding changes."
       exit 1
     fi
   fi
