@@ -129,7 +129,7 @@ cleanup() {
   if [[ -n "${WORK_DIR:-}" && -d "${WORK_DIR}" ]]; then
     if [[ -n "${ORIG_ROOTFS_MOUNT_POINT:-}" ]] && mountpoint -q "${ORIG_ROOTFS_MOUNT_POINT}"; then umount "${ORIG_ROOTFS_MOUNT_POINT}"; fi
 
-    if [ -n "$ROOTFS_MOUNT_POINT" ]; then
+    if [ -n "${ROOTFS_MOUNT_POINT:-}" ]; then
       # Unmount in reverse order of mounting
       if mountpoint -q "${ROOTFS_MOUNT_POINT}/dev/pts"; then umount "${ROOTFS_MOUNT_POINT}/dev/pts"; fi
       if mountpoint -q "${ROOTFS_MOUNT_POINT}/dev"; then umount "${ROOTFS_MOUNT_POINT}/dev"; fi
@@ -348,6 +348,215 @@ rebuild_rootfs() {
   mv "${new_rootfs_img}" "${ROOTFS_IMG_PATH}"
 }
 
+prepare_rootfs_work_dir() {
+  EXTRACTED_SQUASHFS_IMG="${WORK_DIR}/squashfs.img"
+  SQUASHFS_CONTENT_DIR="${WORK_DIR}/squashfs_content"
+
+  mkdir -p "${SQUASHFS_CONTENT_DIR}" "${ROOTFS_MOUNT_POINT}"
+
+  info "Extracting ${SQUASHFS_IMG_PATH_IN_ISO} from ${ISO_FILE}..."
+  xorriso -osirrox on -indev "${ISO_FILE}" -extract "${SQUASHFS_IMG_PATH_IN_ISO}" "${EXTRACTED_SQUASHFS_IMG}" &>/dev/null
+
+  info "Unsquashing ${EXTRACTED_SQUASHFS_IMG} image..."
+  unsquashfs -d "${SQUASHFS_CONTENT_DIR}" "${EXTRACTED_SQUASHFS_IMG}" &>/dev/null
+
+  ROOTFS_IMG_PATH="${SQUASHFS_CONTENT_DIR}${ROOTFS_IMG_PATH_IN_SQUASHFS}"
+  if [[ ! -f "$ROOTFS_IMG_PATH" ]]; then
+    error "${ROOTFS_IMG_PATH} not found inside the squashfs image."
+    exit 1
+  fi
+}
+
+mount_rootfs() {
+  if [[ -n "$NEW_ROOTFS_SIZE" ]]; then
+    # rebuild rootfs with the new size so there is more space if needed
+    rebuild_rootfs
+  else
+    info "Mounting ${ROOTFS_IMG_PATH} to ${ROOTFS_MOUNT_POINT} (read-write)..."
+    mount -o loop,rw "${ROOTFS_IMG_PATH}" "${ROOTFS_MOUNT_POINT}"
+  fi
+}
+
+apply_rootfs_modifications() {
+  # Perform copy operations if requested
+  if [[ ${#COPY_OPS[@]} -gt 0 ]]; then
+    info "Performing copy operations..."
+    for ((i = 0; i < ${#COPY_OPS[@]}; i += 2)); do
+      local local_path="${COPY_OPS[i]}"
+      local image_path="${COPY_OPS[i + 1]}"
+      local dest_path="${ROOTFS_MOUNT_POINT}${image_path}"
+
+      if [[ ! -e "$local_path" ]]; then
+        error "Local path for --copy not found: $local_path"
+        exit 1
+      fi
+      info "Copying ${local_path} to (root)${image_path}..."
+      # Ensure destination directory exists if we are copying a file into a new dir
+      mkdir -p "$(dirname "${dest_path}")"
+      cp -r "${local_path}" "${dest_path}"
+    done
+  fi
+
+  # Run a command if requested
+  if [[ -n "$RUN_COMMAND" ]]; then
+    setup_chroot_env
+
+    info "Running command in chroot: ${RUN_COMMAND}"
+    # Run command, capturing exit code. `|| true` prevents `set -e` from exiting the script.
+    chroot "${ROOTFS_MOUNT_POINT}" /bin/bash -c "${RUN_COMMAND}" || true
+    local run_exit_code=$?
+
+    teardown_chroot_env
+
+    if [[ $run_exit_code -ne 0 ]]; then
+      error "Command failed with exit code ${run_exit_code}. Discarding changes."
+      exit 1
+    fi
+  fi
+
+  if [[ "$INTERACTIVE_SHELL" == "true" || "$DEFAULT_ACTION" == "true" ]]; then
+    setup_chroot_env
+
+    echo
+    success "Chroot environment ready at ${ROOTFS_MOUNT_POINT}"
+    echo
+    info "Entering shell. Make your changes inside the chroot."
+    info "To SAVE changes and repackage the ISO, exit with: exit 0"
+    info "To DISCARD changes, exit with any other code (e.g., 'exit 1' or Ctrl+D)."
+
+    # Run shell, capturing exit code. `|| true` prevents `set -e` from exiting the script.
+    chroot "${ROOTFS_MOUNT_POINT}" /bin/bash || true
+    local chroot_exit_code=$?
+
+    teardown_chroot_env
+
+    if [[ $chroot_exit_code -ne 0 ]]; then
+      error "Shell exited with code ${chroot_exit_code}. Discarding changes."
+      exit 1
+    fi
+  fi
+}
+
+finalize_rootfs_modifications() {
+  if [[ "$REBUILD_ROOTFS" == "true" ]]; then
+    # rebuild rootfs to free space with the deleted files
+    umount "${ROOTFS_MOUNT_POINT}"
+    rebuild_rootfs
+  fi
+}
+
+process_rootfs_actions() {
+  check_rootfs_requirements
+  prepare_rootfs_work_dir
+  mount_rootfs
+  apply_rootfs_modifications
+  finalize_rootfs_modifications
+}
+
+prepare_modified_grub_cfg() {
+  local local_grub_cfg="${WORK_DIR}/grub.cfg"
+  info "Extracting ${GRUB_CFG_PATH_IN_ISO} from ${ISO_FILE}..."
+  xorriso -osirrox on -indev "${ISO_FILE}" -extract "${GRUB_CFG_PATH_IN_ISO}" "${local_grub_cfg}" &>/dev/null
+
+  if [[ -n "$GRUB_UPDATE_FILE" ]]; then
+    info "Updating grub.cfg from ${GRUB_UPDATE_FILE}..."
+    if [[ ! -f "$GRUB_UPDATE_FILE" ]]; then
+      error "Grub update file not found: $GRUB_UPDATE_FILE"
+      exit 1
+    fi
+    cp "$GRUB_UPDATE_FILE" "$local_grub_cfg"
+  fi
+
+  if [[ -n "$GRUB_DEFAULT_ITEM" ]]; then
+    if ! grep -q '^[[:space:]]*set[[:space:]]\+default=' "${local_grub_cfg}"; then
+      warning "'set default=...' line not found in grub.cfg. Cannot set default entry."
+    else
+      info "Setting default grub menu entry to '${GRUB_DEFAULT_ITEM}'"
+      sed -i "s/^\([[:space:]]*set[[:space:]]\+default=\).*/\1\"${GRUB_DEFAULT_ITEM}\"/" "${local_grub_cfg}"
+    fi
+  fi
+
+  if [[ -n "$GRUB_TIMEOUT" ]]; then
+    if ! grep -q '^[[:space:]]*set[[:space:]]\+timeout=' "${local_grub_cfg}"; then
+      warning "'set timeout=...' line not found in grub.cfg. Cannot set timeout."
+    else
+      info "Setting grub menu timeout to '${GRUB_TIMEOUT}' seconds"
+      sed -i "s/^\([[:space:]]*set[[:space:]]\+timeout=\).*/\1${GRUB_TIMEOUT}/" "${local_grub_cfg}"
+    fi
+  fi
+
+  if [[ -n "$GRUB_APPEND_OPTS" ]]; then
+    info "Appending boot options to grub.cfg: '${GRUB_APPEND_OPTS}'"
+    awk -v opts_to_append="${GRUB_APPEND_OPTS}" '
+      BEGIN { state = 0 }
+      /^[[:space:]]*menuentry "Install / { state = 1 }
+      /^[[:space:]]*menuentry "Failsafe -- Install / { state = 1 }
+      /^[[:space:]]*menuentry "Check Installation Medium"/ { state = 1 }
+      (state == 1) && /^[[:space:]]*(linux|linuxefi)/ { $0 = $0 " " opts_to_append; state = 2; }
+      /^[[:space:]]*\}/ { state = 0 }
+      { print }
+    ' "${local_grub_cfg}" >"${local_grub_cfg}.tmp" && mv "${local_grub_cfg}.tmp" "${local_grub_cfg}"
+  fi
+
+  if [[ "$GRUB_INTERACTIVE" == "true" ]]; then
+    info "Opening grub.cfg for interactive editing with ${EDITOR}..."
+    "${EDITOR}" "${local_grub_cfg}"
+  fi
+}
+
+create_new_iso() {
+  success "Changes succeeded, creating a new ISO..."
+
+  local xorriso_args=("-indev" "${ISO_FILE}" "-outdev" "${NEW_ISO_FILENAME}")
+
+  if [[ "$DO_ROOTFS_ACTIONS" == "true" ]]; then
+    info "Unmounting rootfs image to save changes..."
+    umount "${ROOTFS_MOUNT_POINT}"
+
+    local new_squashfs_img="${WORK_DIR}/new_squashfs.img"
+    info "Creating new squashfs image..."
+    # use the same parameters as Kiwi in OBS
+    mksquashfs "${SQUASHFS_CONTENT_DIR}" "${new_squashfs_img}" -noappend -b 1M -comp xz -Xbcj x86 &>/dev/null
+    xorriso_args+=("-map" "${new_squashfs_img}" "${SQUASHFS_IMG_PATH_IN_ISO}")
+  fi
+
+  if [[ ${#COPY_ISO_OPS[@]} -gt 0 ]]; then
+    for ((i = 0; i < ${#COPY_ISO_OPS[@]}; i += 2)); do
+      local local_path="${COPY_ISO_OPS[i]}"
+      local iso_path="${COPY_ISO_OPS[i + 1]}"
+      info "Mapping local file ${local_path} to ${iso_path} in new ISO..."
+      xorriso_args+=("-map" "${local_path}" "${iso_path}")
+    done
+  fi
+
+  if [[ "$DO_GRUB_ACTIONS" == "true" ]]; then
+    prepare_modified_grub_cfg
+    xorriso_args+=("-map" "${WORK_DIR}/grub.cfg" "${GRUB_CFG_PATH_IN_ISO}")
+  fi
+
+  info "Creating new ISO file ${NEW_ISO_FILENAME}..."
+  xorriso_args+=("-boot_image" "any" "replay")
+  xorriso "${xorriso_args[@]}"
+
+  if command -v tagmedia &>/dev/null; then
+    info "Calculating the ISO file checksum..."
+    tagmedia --digest sha256 "${NEW_ISO_FILENAME}"
+  else
+    info "Skipping ISO checksum update ('tagmedia' not found)."
+  fi
+
+  success "Created ${NEW_ISO_FILENAME} ($(file_size "${NEW_ISO_FILENAME}"))"
+}
+
+perform_extraction() {
+  info "Extracting ${EXTRACT_ISO_PATH} to ${EXTRACT_LOCAL_PATH}..."
+  if ! xorriso -osirrox on -indev "${ISO_FILE}" -extract "${EXTRACT_ISO_PATH}" "${EXTRACT_LOCAL_PATH}" &>/dev/null; then
+    error "Failed to extract ${EXTRACT_ISO_PATH}. Please check if the path is correct for your ISO file."
+    exit 1
+  fi
+  success "Successfully extracted ${EXTRACT_ISO_PATH} to ${EXTRACT_LOCAL_PATH}"
+}
+
 # --- Main Script ---
 
 if [[ $# -eq 0 ]]; then
@@ -371,6 +580,7 @@ COPY_ISO_OPS=()
 EXTRACT_ISO_PATH=""
 EXTRACT_LOCAL_PATH=""
 POSITIONAL_ARGS=()
+ROOTFS_MOUNT_POINT=""
 
 # Parse command line arguments
 parse_args "$@"
@@ -381,12 +591,7 @@ if [[ -n "$EXTRACT_ISO_PATH" ]]; then
     error "--extract cannot be combined with other modification options."
     exit 1
   fi
-  info "Extracting ${EXTRACT_ISO_PATH} to ${EXTRACT_LOCAL_PATH}..."
-  if ! xorriso -osirrox on -indev "${ISO_FILE}" -extract "${EXTRACT_ISO_PATH}" "${EXTRACT_LOCAL_PATH}" &>/dev/null; then
-    error "Failed to extract ${EXTRACT_ISO_PATH}. Please check if the path is correct for your ISO file."
-    exit 1
-  fi
-  success "Successfully extracted ${EXTRACT_ISO_PATH} to ${EXTRACT_LOCAL_PATH}"
+  perform_extraction
   exit 0
 fi
 
@@ -417,96 +622,7 @@ trap cleanup EXIT SIGINT SIGTERM
 ROOTFS_MOUNT_POINT="${WORK_DIR}/rootfs_mount"
 
 if [[ "$DO_ROOTFS_ACTIONS" == "true" ]]; then
-  check_rootfs_requirements
-
-  EXTRACTED_SQUASHFS_IMG="${WORK_DIR}/squashfs.img"
-  SQUASHFS_CONTENT_DIR="${WORK_DIR}/squashfs_content"
-
-  mkdir -p "${SQUASHFS_CONTENT_DIR}" "${ROOTFS_MOUNT_POINT}"
-
-  info "Extracting ${SQUASHFS_IMG_PATH_IN_ISO} from ${ISO_FILE}..."
-  xorriso -osirrox on -indev "${ISO_FILE}" -extract "${SQUASHFS_IMG_PATH_IN_ISO}" "${EXTRACTED_SQUASHFS_IMG}" &>/dev/null
-
-  info "Unsquashing ${EXTRACTED_SQUASHFS_IMG} image..."
-  unsquashfs -d "${SQUASHFS_CONTENT_DIR}" "${EXTRACTED_SQUASHFS_IMG}" &>/dev/null
-
-  ROOTFS_IMG_PATH="${SQUASHFS_CONTENT_DIR}${ROOTFS_IMG_PATH_IN_SQUASHFS}"
-  if [[ ! -f "$ROOTFS_IMG_PATH" ]]; then
-    error "${ROOTFS_IMG_PATH} not found inside the squashfs image."
-    exit 1
-  fi
-
-  if [[ -n "$NEW_ROOTFS_SIZE" ]]; then
-    # rebuild rootfs with the new size so there is more space if needed
-    rebuild_rootfs
-  else
-    info "Mounting ${ROOTFS_IMG_PATH} to ${ROOTFS_MOUNT_POINT} (read-write)..."
-    mount -o loop,rw "${ROOTFS_IMG_PATH}" "${ROOTFS_MOUNT_POINT}"
-  fi
-
-  # Perform copy operations if requested
-  if [[ ${#COPY_OPS[@]} -gt 0 ]]; then
-    info "Performing copy operations..."
-    for ((i = 0; i < ${#COPY_OPS[@]}; i += 2)); do
-      local_path="${COPY_OPS[i]}"
-      image_path="${COPY_OPS[i + 1]}"
-      dest_path="${ROOTFS_MOUNT_POINT}${image_path}"
-
-      if [[ ! -e "$local_path" ]]; then
-        error "Local path for --copy not found: $local_path"
-        exit 1
-      fi
-      info "Copying ${local_path} to (root)${image_path}..."
-      # Ensure destination directory exists if we are copying a file into a new dir
-      mkdir -p "$(dirname "${dest_path}")"
-      cp "${local_path}" "${dest_path}"
-    done
-  fi
-
-  # Run a command if requested
-  if [[ -n "$RUN_COMMAND" ]]; then
-    setup_chroot_env
-
-    info "Running command in chroot: ${RUN_COMMAND}"
-    # Run command, capturing exit code. `|| true` prevents `set -e` from exiting the script.
-    chroot "${ROOTFS_MOUNT_POINT}" /bin/bash -c "${RUN_COMMAND}" || true
-    RUN_EXIT_CODE=$?
-
-    teardown_chroot_env
-
-    if [[ $RUN_EXIT_CODE -ne 0 ]]; then
-      error "Command failed with exit code ${RUN_EXIT_CODE}. Discarding changes."
-      exit 1
-    fi
-  fi
-
-  if [[ "$INTERACTIVE_SHELL" == "true" || "$DEFAULT_ACTION" == "true" ]]; then
-    setup_chroot_env
-
-    echo
-    success "Chroot environment ready at ${ROOTFS_MOUNT_POINT}"
-    echo
-    info "Entering shell. Make your changes inside the chroot."
-    info "To SAVE changes and repackage the ISO, exit with: exit 0"
-    info "To DISCARD changes, exit with any other code (e.g., 'exit 1' or Ctrl+D)."
-
-    # Run shell, capturing exit code. `|| true` prevents `set -e` from exiting the script.
-    chroot "${ROOTFS_MOUNT_POINT}" /bin/bash || true
-    CHROOT_EXIT_CODE=$?
-
-    teardown_chroot_env
-
-    if [[ $CHROOT_EXIT_CODE -ne 0 ]]; then
-      error "Shell exited with code ${CHROOT_EXIT_CODE}. Discarding changes."
-      exit 1
-    fi
-  fi
-
-  if [[ "$REBUILD_ROOTFS" == "true" ]]; then
-    # rebuild rootfs to free space with the deleted files
-    umount "${ROOTFS_MOUNT_POINT}"
-    rebuild_rootfs
-  fi
+  process_rootfs_actions
 fi
 
 DO_GRUB_ACTIONS=false
@@ -516,93 +632,6 @@ fi
 
 # Repackage if any action was performed and succeeded.
 if [[ "$DO_ROOTFS_ACTIONS" == "true" || "$DO_GRUB_ACTIONS" == "true" || ${#COPY_ISO_OPS[@]} -gt 0 ]]; then
-  success "Changes succeeded, creating a new ISO..."
-
-  XORRISO_ARGS=("-indev" "${ISO_FILE}" "-outdev" "${NEW_ISO_FILENAME}")
-
-  if [[ "$DO_ROOTFS_ACTIONS" == "true" ]]; then
-    info "Unmounting rootfs image to save changes..."
-    umount "${ROOTFS_MOUNT_POINT}"
-
-    NEW_SQUASHFS_IMG="${WORK_DIR}/new_squashfs.img"
-    info "Creating new squashfs image..."
-    # use the same parameters as Kiwi in OBS
-    mksquashfs "${SQUASHFS_CONTENT_DIR}" "${NEW_SQUASHFS_IMG}" -noappend -b 1M -comp xz -Xbcj x86 &>/dev/null
-    XORRISO_ARGS+=("-map" "${NEW_SQUASHFS_IMG}" "${SQUASHFS_IMG_PATH_IN_ISO}")
-  fi
-
-  if [[ ${#COPY_ISO_OPS[@]} -gt 0 ]]; then
-    for ((i = 0; i < ${#COPY_ISO_OPS[@]}; i += 2)); do
-      local_path="${COPY_ISO_OPS[i]}"
-      iso_path="${COPY_ISO_OPS[i + 1]}"
-      info "Mapping local file ${local_path} to ${iso_path} in new ISO..."
-      XORRISO_ARGS+=("-map" "${local_path}" "${iso_path}")
-    done
-  fi
-
-  if [[ "$DO_GRUB_ACTIONS" == "true" ]]; then
-    LOCAL_GRUB_CFG="${WORK_DIR}/grub.cfg"
-    info "Extracting ${GRUB_CFG_PATH_IN_ISO} from ${ISO_FILE}..."
-    xorriso -osirrox on -indev "${ISO_FILE}" -extract "${GRUB_CFG_PATH_IN_ISO}" "${LOCAL_GRUB_CFG}" &>/dev/null
-
-    if [[ -n "$GRUB_UPDATE_FILE" ]]; then
-      info "Updating grub.cfg from ${GRUB_UPDATE_FILE}..."
-      if [[ ! -f "$GRUB_UPDATE_FILE" ]]; then
-        error "Grub update file not found: $GRUB_UPDATE_FILE"
-        exit 1
-      fi
-      cp "$GRUB_UPDATE_FILE" "$LOCAL_GRUB_CFG"
-    fi
-
-    if [[ -n "$GRUB_DEFAULT_ITEM" ]]; then
-      if ! grep -q '^[[:space:]]*set[[:space:]]\+default=' "${LOCAL_GRUB_CFG}"; then
-        warning "'set default=...' line not found in grub.cfg. Cannot set default entry."
-      else
-        info "Setting default grub menu entry to '${GRUB_DEFAULT_ITEM}'"
-        sed -i "s/^\([[:space:]]*set[[:space:]]\+default=\).*/\1\"${GRUB_DEFAULT_ITEM}\"/" "${LOCAL_GRUB_CFG}"
-      fi
-    fi
-
-    if [[ -n "$GRUB_TIMEOUT" ]]; then
-      if ! grep -q '^[[:space:]]*set[[:space:]]\+timeout=' "${LOCAL_GRUB_CFG}"; then
-        warning "'set timeout=...' line not found in grub.cfg. Cannot set timeout."
-      else
-        info "Setting grub menu timeout to '${GRUB_TIMEOUT}' seconds"
-        sed -i "s/^\([[:space:]]*set[[:space:]]\+timeout=\).*/\1${GRUB_TIMEOUT}/" "${LOCAL_GRUB_CFG}"
-      fi
-    fi
-
-    if [[ -n "$GRUB_APPEND_OPTS" ]]; then
-      info "Appending boot options to grub.cfg: '${GRUB_APPEND_OPTS}'"
-      awk -v opts_to_append="${GRUB_APPEND_OPTS}" '
-				BEGIN { state = 0 }
-				/^[[:space:]]*menuentry "Install / { state = 1 }
-				/^[[:space:]]*menuentry "Failsafe -- Install / { state = 1 }
-				/^[[:space:]]*menuentry "Check Installation Medium"/ { state = 1 }
-				(state == 1) && /^[[:space:]]*(linux|linuxefi)/ { $0 = $0 " " opts_to_append; state = 2; }
-				/^[[:space:]]*\}/ { state = 0 }
-				{ print }
-			' "${LOCAL_GRUB_CFG}" >"${LOCAL_GRUB_CFG}.tmp" && mv "${LOCAL_GRUB_CFG}.tmp" "${LOCAL_GRUB_CFG}"
-    fi
-
-    if [[ "$GRUB_INTERACTIVE" == "true" ]]; then
-      info "Opening grub.cfg for interactive editing with ${EDITOR}..."
-      "${EDITOR}" "${LOCAL_GRUB_CFG}"
-    fi
-    XORRISO_ARGS+=("-map" "${LOCAL_GRUB_CFG}" "${GRUB_CFG_PATH_IN_ISO}")
-  fi
-
-  info "Creating new ISO file ${NEW_ISO_FILENAME}..."
-  XORRISO_ARGS+=("-boot_image" "any" "replay")
-  xorriso "${XORRISO_ARGS[@]}"
-
-  if command -v tagmedia &>/dev/null; then
-    info "Calculating the ISO file checksum..."
-    tagmedia --digest sha256 "${NEW_ISO_FILENAME}"
-  else
-    info "Skipping ISO checksum update ('tagmedia' not found)."
-  fi
-
-  success "Created ${NEW_ISO_FILENAME} ($(file_size "${NEW_ISO_FILENAME}"))"
+  create_new_iso
   exit 0
 fi
