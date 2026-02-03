@@ -52,8 +52,7 @@ It automates the following process:
     - With `--rebuild`, the `rootfs.img` is recreated from scratch to produce a clean filesystem.
       This is useful if you delete some big files from the root filesystem or you use some big
       temporary files, for example installing RPM packages.
-    - The `--size` option can be used to specify a new size for the rootfs image; this automatically
-      implies `--rebuild`.
+    - The `--resize` option can be used to specify a new size for the rootfs image.
 3. If no changes are to be saved, all temporary files are discarded.
 
 This is useful for debugging or customizing the installer environment. The script requires root
