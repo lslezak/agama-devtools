@@ -69,7 +69,7 @@ usage() {
   echo "  --grub-default <N>    Set the default grub menu entry to N (must be a number)."
   echo "  --grub-timeout <N>    Set the grub menu timeout to N seconds."
   echo "  --grub-append <opts> Append kernel options to 'Install' menu entries in grub.cfg."
-  echo "  --grub-interactive  Interactively edit grub.cfg using editor."
+  echo "  --grub-edit         Interactively edit grub.cfg using editor."
   echo "  --output <file>     Specify the output ISO file name."
   echo "                      Default: input file with '*-edited.iso' suffix."
   echo "Requires root privileges to perform mount operations."
@@ -249,7 +249,7 @@ parse_args() {
       EXTRACT_LOCAL_PATH="$3"
       shift 3
       ;;
-    --grub-interactive)
+    --grub-edit)
       if ! command -v "${EDITOR}" &>/dev/null; then
         error "Editor '${EDITOR}' not found."
         exit 1

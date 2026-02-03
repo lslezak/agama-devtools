@@ -42,7 +42,7 @@ It automates the following process:
     - **Run Mode (`--chroot-run`):** Executes a command within the `chroot` environment.
     - **ISO File Copy (`--copy-iso`):** Copies local files/directories to any path within the ISO
       filesystem.
-    - **Grub Editing**: Includes options (`--grub-default`, `--grub-timeout`, `--grub-append`, `--grub-interactive`)
+    - **Grub Editing**: Includes options (`--grub-default`, `--grub-timeout`, `--grub-append`, `--grub-edit`)
       to modify the `grub.cfg` bootloader configuration. A generic `--extract` option can be used to
       extract any file for inspection.
     - **Combination:** Any combination of rootfs and grub modification options can be used in a
