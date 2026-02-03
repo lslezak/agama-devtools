@@ -309,6 +309,11 @@ check_rootfs_requirements() {
   fi
 }
 
+file_size() {
+  local size_str=$(stat -c %s "$1" | numfmt --to=iec-i)
+  echo "${size_str}B"
+}
+
 rebuild_rootfs() {
   info "Rebuilding rootfs image..."
   ORIG_ROOTFS_MOUNT_POINT="${WORK_DIR}/orig_rootfs_mount"
@@ -323,7 +328,7 @@ rebuild_rootfs() {
     size_desc="$NEW_ROOTFS_SIZE"
   else
     image_size=$(stat -c %s "${ROOTFS_IMG_PATH}")
-    size_desc="${image_size} bytes ($(echo "$image_size" | numfmt --to=iec-i)B) (original size)"
+    size_desc="${image_size} bytes ($(file_size "${ROOTFS_IMG_PATH}")) (original size)"
   fi
   new_rootfs_img="${WORK_DIR}/new_rootfs.img"
 
@@ -598,6 +603,6 @@ if [[ "$DO_ROOTFS_ACTIONS" == "true" || "$DO_GRUB_ACTIONS" == "true" || ${#COPY_
     info "Skipping ISO checksum update ('tagmedia' not found)."
   fi
 
-  success "Created ${NEW_ISO_FILENAME}"
+  success "Created ${NEW_ISO_FILENAME} ($(file_size "${NEW_ISO_FILENAME}"))"
   exit 0
 fi
