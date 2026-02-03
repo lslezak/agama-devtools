@@ -94,7 +94,7 @@ setup_chroot_env() {
   mount --bind /proc "${ROOTFS_MOUNT_POINT}/proc"
   mount --bind /sys "${ROOTFS_MOUNT_POINT}/sys"
   mount --bind /dev "${ROOTFS_MOUNT_POINT}/dev"
-  mount -t devpts none "${ROOTFS_MOUNT_POINT}/dev/pts"
+  mount --bind /dev/pts "${ROOTFS_MOUNT_POINT}/dev/pts"
 }
 
 teardown_chroot_env() {
@@ -420,18 +420,18 @@ apply_rootfs_modifications() {
     echo
     success "Chroot environment ready at ${ROOTFS_MOUNT_POINT}"
     echo
-    info "Entering shell. Make your changes inside the chroot."
-    info "To SAVE changes and repackage the ISO, exit with: exit 0"
-    info "To DISCARD changes, exit with any other code (e.g., 'exit 1' or Ctrl+D)."
+    info "Entering chroot  shell. Make your changes inside the chroot."
+    info "To APPLY changes and rebuild the ISO, exit with: 'exit 0' or Ctrl+D"
+    info "To DISCARD changes, exit with any other code: 'exit 1'"
 
-    # Run shell, capturing exit code. `|| true` prevents `set -e` from exiting the script.
-    chroot "${ROOTFS_MOUNT_POINT}" /bin/bash || true
-    local chroot_exit_code=$?
+    # Run shell, `||` prevents `set -e` from exiting the script.
+    local chroot_failed=""
+    chroot "${ROOTFS_MOUNT_POINT}" || chroot_failed=true
 
     teardown_chroot_env
 
-    if [[ $chroot_exit_code -ne 0 ]]; then
-      error "Shell exited with code ${chroot_exit_code}. Discarding changes."
+    if [[ -n "$chroot_failed" ]]; then
+      error "Chroot shell failed, discarding changes."
       exit 1
     fi
   fi
@@ -586,6 +586,7 @@ GRUB_TIMEOUT=""
 GRUB_APPEND_OPTS=""
 GRUB_UPDATE_FILE=""
 GRUB_INTERACTIVE=false
+DO_GRUB_ACTIONS=false
 COPY_ISO_OPS=()
 EXTRACT_ISO_PATH=""
 EXTRACT_LOCAL_PATH=""
@@ -635,7 +636,6 @@ if [[ "$DO_ROOTFS_ACTIONS" == "true" ]]; then
   process_rootfs_actions
 fi
 
-DO_GRUB_ACTIONS=false
 if [[ -n "$GRUB_APPEND_OPTS" || -n "$GRUB_UPDATE_FILE" || "$GRUB_INTERACTIVE" == "true" || -n "$GRUB_DEFAULT_ITEM" || -n "$GRUB_TIMEOUT" ]]; then
   DO_GRUB_ACTIONS=true
 fi
