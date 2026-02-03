@@ -50,30 +50,38 @@ EDITOR="${EDITOR:-vim}"
 # --- Functions ---
 
 usage() {
-  echo "Usage: $0 [options] <iso_file>"
-  echo ""
-  echo "Allows modifying the Agama installation ISO images."
-  echo ""
-  echo "Options:"
-  echo "  -h, --help           Show this help message and exit."
-  echo "  --extract <iso_path> <local_path>  Extract a file from the ISO and exit."
-  echo "  --copy-iso <local_path> <iso_path>   Copy a local file/dir to the ISO. Can be used multiple times."
-  echo "  --copy-root <local_path> <root_path> Copy local file/dir to the rootfs. Can be used multiple times."
-  echo "  --chroot-run <command>               Execute a command in the chroot after copying files."
-  echo "                                       The script will repackage on success."
-  echo "  --chroot-shell                       Enter an interactive shell. Useful with --copy-root to inspect"
-  echo "                                       changes before repackaging. Implied if no other action is specified."
-  echo "  --rebuild           Rebuild the rootfs ext4 image from scratch to remove deleted data."
-  echo "  --size <size>       Create a new rootfs image of <size> (e.g., 4G)."
-  echo "                      This option implies --rebuild."
-  echo "  --grub-default <N>    Set the default grub menu entry to N (must be a number)."
-  echo "  --grub-timeout <N>    Set the grub menu timeout to N seconds."
-  echo "  --grub-append <opts> Append kernel options to 'Install' menu entries in grub.cfg."
-  echo "  --grub-edit         Interactively edit grub.cfg using editor."
-  echo "  --output <file>     Specify the output ISO file name."
-  echo "                      Default: input file with '*-edited.iso' suffix."
-  echo "Requires root privileges to perform mount operations."
-  exit 1
+  cat <<EOF
+Usage: $0 [options] <iso_file>
+
+A tool for modifying the Agama Live ISO installation images.
+
+Options:
+  -h, --help           Show this help message and exit
+  --extract <iso_path> <local_path>    Extract a file from the ISO
+  --copy-iso <local_path> <iso_path>   Copy a local file/dir to the ISO,
+                                       can be used multiple times
+  --copy-root <local_path> <root_path> Copy local file/dir to the rootfs,
+                                       can be used multiple times
+  --chroot-run <command>      Execute a command in the chroot
+  --chroot-shell              Enter an interactive shell chroot, default
+                              behavior if no other action is specified
+  --rebuild            Rebuild the rootfs image from scratch, removes
+                       the deleted data from the image
+  --resize <size>      Create a new rootfs image of <size> (e.g. 4G)
+  --grub-default <N>   Set the default grub menu entry to the Nth item
+  --grub-timeout <N>   Set the grub menu timeout to N seconds
+  --grub-append <opts> Append kernel options to all 'Install' boot menu entries
+  --grub-edit          Interactively edit grub.cfg using editor
+  --output <file>      Specify the output ISO file name
+                       Default: the input file with '*-edited.iso' suffix
+
+Requires root privileges to perform rootfs mount operations.
+EOF
+  if [[ "$SHOW_HELP" == "true" ]]; then
+    exit 0
+  else
+    exit 1
+  fi
 }
 
 setup_chroot_env() {
@@ -147,6 +155,7 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
     -h | --help)
+      SHOW_HELP=true
       usage
       ;;
     --output)
@@ -188,9 +197,9 @@ parse_args() {
       REBUILD_ROOTFS=true
       shift
       ;;
-    --size)
+    --resize)
       if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-        error "--size requires a size argument (e.g., 4G)."
+        error "--resize requires a size argument (e.g., 4G)."
         usage
       fi
       NEW_ROOTFS_SIZE="$2"
@@ -592,6 +601,7 @@ EXTRACT_ISO_PATH=""
 EXTRACT_LOCAL_PATH=""
 POSITIONAL_ARGS=()
 ROOTFS_MOUNT_POINT=""
+SHOW_HELP=false
 
 # Parse command line arguments
 parse_args "$@"
