@@ -248,8 +248,19 @@ xorriso -indev original.iso -pvd_info 2> /dev/null | grep "Volume Id"
 
 If you need to debug the installer, you can add tools like `strace` or `tcpdump`.
 
+If you want to share the modified image then it is recommended to clean the zypper caches and
+rebuild the rootfs image from scratch. This removes tha data blocks in the image with deleted files.
+It takes a bit longer time but the result is a smaller ISO image file.
+
+For local testing or debugging it might be OK to keep the caches and deleted files, it builds the
+new image faster.
+
 ```sh
+# this will create a bit bigger image with libzypp caches,
 sudo ./agama-iso-builder --chroot-run "zypper -n in strace tcpdump" original.iso
+
+# delete the zypper caches and rebuild the rootfs image from scratch
+sudo ./agama-iso-builder --rebuild --chroot-run "zypper -n in strace tcpdump && zypper clean -a" original.iso
 ```
 
 ### Enabling serial console
