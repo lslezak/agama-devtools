@@ -9,6 +9,7 @@ images.
 
 - [Agama ISO builder](#agama-iso-builder)
   - [Usage](#usage)
+  - [Temporary files](#temporary-files)
   - [Use cases](#use-cases)
     - [Changing default boot menu item](#changing-default-boot-menu-item)
     - [Appending boot options](#appending-boot-options)
@@ -69,14 +70,33 @@ sudo ./agama-iso-builder --output /path/to/new.iso /path/to/original.iso
 # Non-interactively copy a custom script into the image and build a new ISO
 sudo ./agama-iso-builder --copy-root ./my-script.sh /usr/local/bin/my-script.sh /path/to/original.iso
 
+# Copy a file and then enter an interactive shell to verify
+sudo ./agama-iso-builder --copy-root ./my-script.sh /usr/local/bin/my-script.sh --chroot-shell /path/to/original.iso
+
 # Run a command to install a package and build a new ISO
 sudo ./agama-iso-builder --chroot-run "zypper -n in htop" /path/to/original.iso
 
-# Copy a file and then enter an interactive shell to verify
-sudo ./agama-iso-builder --copy-root ./debug.conf /etc/debug.conf --chroot-shell /path/to/original.iso
-
 # Set the default boot menu entry to installation and decrease the default timeout to 3 seconds
 ./agama-iso-builder --grub-default 1 --grub-timeout 3 /path/to/original.iso
+```
+
+## Temporary files
+
+When rebuilding the ISO image the temporary files are created in the default system temporary
+directory, usually `/tmp`.
+
+However, in some situations you might want to use another place. If your `/tmp` is located on an SSD
+you might want to reduce wearing and use a different location. Or if your machine has plenty of RAM
+you might use a RAM disk for faster builds.
+
+The default location can be changed by setting the `TMPDIR` environment variable.
+
+```sh
+# create a RAM disk with maximum size 10GB
+mount -t tmpfs tmpfs -o size=10G /ram-disk
+
+# set the location of the temporary files for the builder
+sudo TMPDIR=/ram-disk ./agama-iso-builder ...
 ```
 
 ## Use cases
