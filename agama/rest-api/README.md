@@ -37,8 +37,14 @@ Here are few request examples:
 # partially update the configuration (select SLES with the GNOME pattern)
 ./request.sh config -X PATCH -d '{"update": {"product": {"id": "SLES"}, "software": {"patterns": ["gnome"] }}}'
 
-# show current configuration
+# show current configuration (only the user configured options)
 ./request.sh config | jq
+
+# show current configuration (including the default or pre-configured values)
+./request.sh extended_config | jq
+
+# show system details (available software patterns, hardware details )
+./request.sh system | jq
 
 # show the proposal
 ./request.sh proposal | jq
