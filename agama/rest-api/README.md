@@ -13,7 +13,7 @@ you can change the server URL with the `-u` option.
 The password can be provided on the command line via the `-p` option, but be
 careful, this reveals the password in the process list! If the password is not
 specified on the command line the script asks for it interactively. This
-recommended as it avoids leaking the password in the process list.
+is recommended to avoid leaking the password in the process list.
 
 The login script creates the `curl.conf` file which contains the login token,
 the used Agama URL and some more curl options which are used later when sending
@@ -22,7 +22,7 @@ requests.
 ## Sending requests
 
 For sending the API requests use the [requests.sh](./request.sh) script. The
-first parameter is the API endpoint name without the `/api/v2` prefix. The
+first parameter is the API endpoint name (without the `/api/v2` prefix). The
 remaining parameters are just passed to the curl call unmodified so you can pass
 whatever curl option you need.
 
@@ -35,7 +35,7 @@ Here are few request examples:
 ./request.sh config -X PUT -d '{}'
 
 # partially update the configuration (select SLES with the GNOME pattern)
-./request.sh config -d '{"update": {"product": {"id": "SLES"}, "software": {"patterns": ["gnome"] }}}'
+./request.sh config -X PATCH -d '{"update": {"product": {"id": "SLES"}, "software": {"patterns": ["gnome"] }}}'
 
 # show current configuration
 ./request.sh config | jq

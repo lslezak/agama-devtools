@@ -3,14 +3,22 @@
 This repository contains a set of helper scripts and tools useful for developing
 the [Agama installer](https://github.com/agama-project/agama).
 
+> [!WARNING]
+>
+> *The whole repository is considered experimental, there is no support for
+> using the tools or the documentation included here! Use at your own risk!*
+
 ## Content
 
 ### Agama scripts
 
 - [rest-api](./agama/rest-api/) - helper scripts for interacting with the new
-  Agama v2 REST API (still in development)
+  Agama v2 REST API
+
+## Live ISO
+
 - [live-iso](./live-iso/) - helper script for modifying and rebuilding the Agama
-  installation ISO images.
+  installation ISO images. Allows customizing or extending the installer.
 
 ## Network scripts
 
