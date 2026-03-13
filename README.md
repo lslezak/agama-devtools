@@ -17,8 +17,11 @@ the [Agama installer](https://github.com/agama-project/agama).
 
 ## Live ISO
 
-- [live-iso](./live-iso/) - helper script for modifying and rebuilding the Agama
-  installation ISO images. Allows customizing or extending the installer.
+- [live-iso/builder](./live-iso/builder) - helper script for modifying and rebuilding
+  the Agama installation ISO images. Allows customizing or extending the
+  installer.
+- [live-iso/download](./live-iso/download/) - scripts for downloading and
+  managing the Agama ISO images.
 
 ## Network scripts
 

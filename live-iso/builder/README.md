@@ -8,6 +8,7 @@ images.
 > installer! Use at your own risk!*
 
 - [Agama ISO builder](#agama-iso-builder)
+  - [Installation](#installation)
   - [Usage](#usage)
   - [Temporary files](#temporary-files)
   - [Use cases](#use-cases)
@@ -60,6 +61,16 @@ This is useful for debugging or customizing the installer environment. The scrip
 privileges for modifying the root filesystem image. For modifying only the ISO image content
 (updating the boot menu, adding packages to the medium, updating kernel/initrd) the root permissions
 are not required.
+
+## Installation
+
+The included `Makefile` provides support for easy installation. It is recommended to run it as
+`root` user to install it into the `/usr/local/bin` directory so it can be accessed when running via
+`sudo`.
+
+```sh
+sudo make install
+```
 
 ## Usage
 

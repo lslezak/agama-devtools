@@ -1,0 +1,549 @@
+#! /bin/bash
+
+set -eu
+
+ARCH=$(uname -m)
+CURRENT_TIME=$(date +%s)
+GPG_DOWNLOAD_URL=""
+CHECKSUM_DOWNLOAD_URL=""
+TEMP_KEYRING=""
+
+function cleanup() {
+	if [ -n "$TEMP_KEYRING" ] && [ -f "$TEMP_KEYRING" ]; then
+		rm "$TEMP_KEYRING"
+	fi
+}
+trap cleanup EXIT
+
+# --- Colors and Helpers ---
+# Check if stderr is a terminal and if it supports at least 8 colors
+if [[ -t 2 && $(tput colors 2>/dev/null) -ge 8 ]]; then
+	RED=$(tput setaf 1)
+	GREEN=$(tput setaf 2)
+	YELLOW=$(tput setaf 3)
+	NC=$(tput sgr0) # No Color
+else
+	RED=""
+	GREEN=""
+	YELLOW=""
+	NC=""
+fi
+
+# Check for terminal hyperlink support
+HYPERLINKS=false
+if [[ -t 1 ]]; then
+	# can some other terminals display links?
+	if [ "${VTE_VERSION:-0}" -ge 5000 ] ||
+		[ "${TERM_PROGRAM:-}" = "vscode" ]; then
+		HYPERLINKS=true
+	fi
+fi
+
+red() {
+	echo "${RED}${*}${NC}"
+}
+
+yellow() {
+	echo "${YELLOW}${*}${NC}"
+}
+
+green() {
+	echo "${GREEN}${*}${NC}"
+}
+
+function print_help() {
+	echo "Usage: $0 [options] [image-id]"
+	echo
+	echo "Options:"
+	echo "  -h, --help     Display this help and exit"
+	echo "  --arch <arch>  Specify the architecture (default: ${ARCH})"
+	echo
+	echo "Run without arguments to see the list of available image IDs."
+}
+
+# check if the IBS server is accessible
+if curl --head --silent --fail --connect-timeout 5 --max-time 5 -L "https://download.suse.de" >/dev/null; then
+	IBS=true
+else
+	IBS=false
+fi
+
+function relative_time() {
+	local DIFF=$((CURRENT_TIME - $1))
+
+	if [[ $DIFF -lt 60 ]]; then
+		echo "$DIFF seconds ago"
+	elif [[ $DIFF -lt 3600 ]]; then
+		echo "$((DIFF / 60)) minutes ago"
+	elif [[ $DIFF -lt 86400 ]]; then
+		echo "$((DIFF / 3600)) hours ago"
+	else
+		echo "$((DIFF / 86400)) days ago"
+	fi
+}
+
+function quarterly_updates() {
+	local BASE_URL="https://download.suse.de/ibs/SUSE:/SLFO:/Products:/SLES:/16.0:"
+	readarray -t UPDATES < <(curl -L -s "${BASE_URL}/?jsontable" | jq -r ".data[] | select(.name|test(\"^QU[0-9]+/\$\")) | .name" | tr -d "/")
+}
+
+function print_released_images() {
+	echo "Released images:"
+	echo "================"
+	echo
+	echo "  openSUSE Leap 16.0"
+	echo "  ------------------"
+	echo
+	printf "  ID: "
+	green "leap-16.0-offline"
+	echo "  Description: Official openSUSE Leap 16.0 offline image"
+	print_image "https://download.opensuse.org/distribution/leap/16.0/offline" \
+		"Leap-16\\\\.0-offline-installer-${ARCH}\\\\.install\\\\.iso\$"
+	echo
+	printf "  ID: "
+	green "leap-16.0-online"
+	echo "  Description: Official openSUSE Leap 16.0 online image"
+	print_image "https://download.opensuse.org/distribution/leap/16.0/offline" \
+		"Leap-16\\\\.0-online-installer-${ARCH}\\\\.install\\\\.iso\$"
+	echo
+
+	echo "  SLES 16.0"
+	echo "  ---------"
+	echo
+	if [[ "$IBS" == "true" ]]; then
+		printf "  ID: "
+		green "sles-16.0-offline"
+		echo "  Description: Official SLES 16.0 offline image"
+		print_image "https://download.suse.de/install/SLES-16-GM" \
+			"SLES-16\\\\.0-Full-${ARCH}-GM\\\\.install\\\\.iso\$"
+		echo
+		printf "  ID: "
+		green "sles-16.0-online"
+		echo "  Description: Official SLES 16.0 online image"
+		print_image "https://download.suse.de/install/SLES-16-GM" \
+			"SLES-16\\\\.0-Online-${ARCH}-GM\\\\.install\\\\.iso\$"
+		echo
+
+		echo "  SLES 16.0 - Quarterly Updates"
+		echo "  -----------------------------"
+		echo
+		quarterly_updates
+		for UPDATE in "${UPDATES[@]}"; do
+			printf "  ID: "
+			green "sles-16.0-${UPDATE}-offline"
+			echo "  Description: SLES 16.0 ${UPDATE} offline image"
+			print_image "https://download.suse.de/ibs/SUSE:/SLFO:/Products:/SLES:/16.0:/${UPDATE}/product/iso/" \
+				"SLES-16\\\\.0-Full-${ARCH}-.*\\\\.install\\\\.iso\$"
+			echo
+			printf "  ID: "
+			green "sles-16.0-${UPDATE}-online"
+			echo "  Description: SLES 16.0 ${UPDATE} online image"
+			print_image "https://download.suse.de/ibs/SUSE:/SLFO:/Products:/SLES:/16.0:/${UPDATE}/product/iso/" \
+				"SLES-16\\\\.0-Online-${ARCH}-.*\\\\.install\\\\.iso\$"
+			echo
+		done
+	else
+		yellow "  Skipping SLES images, https://download.suse.de is not accessible."
+	fi
+}
+
+function print_testing_images() {
+	echo "Testing images:"
+	echo "==============="
+	echo
+	echo "  openSUSE Leap 16.1"
+	echo "  ------------------"
+	echo
+	printf "  ID: "
+	green "leap-16.1-beta-offline"
+	echo "  Description: Testing openSUSE Leap 16.1 Beta offline image"
+	print_image "https://download.opensuse.org/repositories/openSUSE:/Leap:/16.1:/ToTest/product/iso/" \
+		"Leap-16\\\\.1-offline-installer-${ARCH}-.*\\\\.install\\\\.iso\$"
+	echo
+	printf "  ID: "
+	green "leap-16.1-beta-online"
+	echo "  Description: Testing openSUSE Leap 16.1 Beta online image"
+	print_image "https://download.opensuse.org/repositories/openSUSE:/Leap:/16.1:/ToTest/product/iso/" \
+		"Leap-16\\\\.1-online-installer-${ARCH}-.*\\\\.install\\\\.iso\$"
+	echo
+
+	echo "  SLES 16.1"
+	echo "  ---------"
+	echo
+	if [[ "$IBS" == "true" ]]; then
+		printf "  ID: "
+		green "sles-16.1-beta-offline"
+		echo "  Description: Testing SLES 16.1 Beta offline image"
+		print_image "https://download.suse.de/install/SLES-16.1-LATEST/" \
+			"SLES-16\\\\.1-Full-${ARCH}-.*\\\\.install\\\\.iso\$"
+		echo
+		printf "  ID: "
+		green "sles-16.1-beta-online"
+		echo "  Description: Testing SLES 16.1 Beta online image"
+		print_image "https://download.suse.de/install/SLES-16.1-LATEST/" \
+			"SLES-16\\\\.1-Online-${ARCH}-.*\\\\.install\\\\.iso\$"
+		echo
+	else
+		yellow "  Skipping SLES images, https://download.suse.de is not accessible."
+	fi
+}
+
+function print_development_images() {
+	echo "Development images:"
+	echo "==================="
+	echo
+	echo "  openSUSE"
+	echo "  --------"
+	echo
+	printf "  ID: "
+	green "devel-tw"
+	echo "  Description: The latest openSUSE Tumbleweed image from systemsmanagement:Agama:Devel project"
+	print_image "https://download.opensuse.org/repositories/systemsmanagement:/Agama:/Devel/images/iso/" \
+		"${ARCH}-.*Build.*\\\\.iso\$"
+	echo
+	printf "  ID: "
+	green "devel-leap"
+	echo "  Description: The latest openSUSE Leap image from systemsmanagement:Agama:Devel project"
+	print_image "https://download.opensuse.org/repositories/systemsmanagement:/Agama:/Devel/images_Leap_16.1/iso/" \
+		"${ARCH}-.*Build.*\\\\.iso\$"
+
+	echo
+	echo "  SLES"
+	echo "  ----"
+	echo
+	if [[ "$IBS" == "true" ]]; then
+		printf "  ID: "
+		green "devel-sles"
+		echo "  Description: Latest development SLES 16.1 online image (Devel:YaST:Agama:Head)"
+		print_image "https://download.suse.de/ibs/Devel:/YaST:/Agama:/Head/images_SLES-16.1/iso/" \
+			"${ARCH}-.*Build.*\\\\.iso\$"
+		echo
+		printf "  ID: "
+		green "devel-sles-test-offline"
+		echo "  Description: Latest development SLES 16.1 Beta offline image (SLFO)"
+		print_image "https://download.suse.de/ibs/SUSE:/SLFO:/Products:/SLES:/16.1:/TEST/product/iso/" \
+			"SLES-16\\\\.1-Full-${ARCH}-.*\\\\.install\\\\.iso\$"
+		echo
+		printf "  ID: "
+		green "devel-sles-test-online"
+		echo "  Description: Latest development SLES 16.1 Beta online image (SLFO)"
+		print_image "https://download.suse.de/ibs/SUSE:/SLFO:/Products:/SLES:/16.1:/TEST/product/iso/" \
+			"SLES-16\\\\.1-Online-${ARCH}-.*\\\\.install\\\\.iso\$"
+		echo
+	else
+		yellow "  Skipping SLES images, https://download.suse.de is not accessible."
+	fi
+}
+
+function print_experimental_images() {
+	echo "Experimental images:"
+	echo "==================="
+	list_branches
+	echo
+}
+
+function print_list() {
+	echo "To download an image run:  $0 [image-id]"
+	echo
+	print_released_images
+	echo
+	print_testing_images
+	echo
+	print_development_images
+	echo
+	print_experimental_images
+}
+
+function print_image() {
+	local BASE_URL="$1"
+	local PATTERN="$2"
+
+	local DATA;
+	DATA=$(curl -L -s "${BASE_URL}/?jsontable" |
+		jq -r ".data[] | select(.name|test(\"${PATTERN}\")) | \"\(.name) \(.size) \(.mtime)\"" |
+		sort -V | tail -n 1)
+
+	if [ -z "$DATA" ]; then
+		red "  ISO image not found"
+	else
+		# split the image name, size and modification time
+		local NAME
+		NAME=$(echo "$DATA" | awk '{print $1}')
+		local SIZE
+		SIZE=$(echo "$DATA" | awk '{print $2}')
+		local MTIME
+		MTIME=$(echo "$DATA" | awk '{print $3}')
+
+		local HUMAN_SIZE
+		# format the size to kiB/MiB/... as needed
+		HUMAN_SIZE=$(numfmt --to=iec-i --suffix=B "$SIZE")
+		local DATE
+		DATE=$(date -d "@$MTIME" +"%Y-%m-%d %H:%M:%S")
+		local REL_TIME
+		REL_TIME=$(relative_time "$MTIME")
+
+		if [ "$HYPERLINKS" = "true" ]; then
+			# print the ISO URL as a clickable link
+			printf "  ISO: \e]8;;%s%s\e\\%s%s%s\e]8;;\e\\ (%s, %s - %s)\n" \
+				"$BASE_URL" "$NAME" "$YELLOW" "$NAME" "$NC" "$HUMAN_SIZE" "$DATE" "$REL_TIME"
+		else
+			# display a plain link
+			echo "  ISO: ${YELLOW}${BASE_URL}${NAME}${NC} ($HUMAN_SIZE, $DATE - $REL_TIME)"
+		fi
+	fi
+}
+
+function latest_version() {
+	local BASE_URL="$1"
+	local PATTERN="$2"
+
+	curl -L -s "${BASE_URL}/?jsontable" | jq -r ".data[] | select(.name|test(\"${PATTERN}\")) | .name" | sort -V | tail -n 1
+}
+
+function get_branches() {
+	curl -L -s -H "accept: application/json" "https://build.opensuse.org/project/subprojects/systemsmanagement:Agama?type=subproject&length=1000" |
+		jq -r ".data[] | select(.name|test(\"systemsmanagement:Agama:branches:\")) | .name " | sort |
+		sed -e "s/.*systemsmanagement:Agama:branches:\([^<]\+\).*/\\1/"
+}
+
+function list_branches() {
+	readarray -t BRANCHES < <(get_branches)
+	for BRANCH in "${BRANCHES[@]}"; do
+		echo
+		printf "  ID: "
+		green "devel-branch-${BRANCH}"
+		echo "  Description: The experimental image from systemsmanagement:Agama:branches:${BRANCH} project"
+		print_image "https://download.opensuse.org/repositories/systemsmanagement:/Agama:/branches:/${BRANCH}/images/iso/" \
+			"${ARCH}-.*-openSUSE-Build.*\\\\.iso\$"
+	done
+}
+
+function verify_signature_with_keyring() {
+	local KEYRING="$1"
+	if gpg --no-default-keyring --keyring "$KEYRING" --verify "$GPG_FILE" "$CHECKSUM_FILE"; then
+		green "GPG signature OK"
+	else
+		red "GPG signature verification failed, the file might be corrupted."
+		exit 1
+	fi
+}
+
+function verify_checksum_and_signature() {
+	if [ -n "$CHECKSUM_DOWNLOAD_URL" ]; then
+		CHECKSUM_URL="${CHECKSUM_DOWNLOAD_URL}"
+		CHECKSUM_FILE="${CHECKSUM_DOWNLOAD_URL##*/}"
+		GPG_URL=""
+		GPG_FILE=""
+	else
+		CHECKSUM_URL="${URL}.sha256"
+		CHECKSUM_FILE="${URL##*/}.sha256"
+		GPG_URL="${CHECKSUM_URL}.asc"
+		GPG_FILE="${CHECKSUM_FILE}.asc"
+	fi
+
+	echo "Downloading checksum ${CHECKSUM_FILE}..."
+	curl -s -L -O "$CHECKSUM_URL"
+
+	# remove the lines from the checksum file which do not match the current image
+	sed -i "/${URL##*/}$/!d" "$CHECKSUM_FILE"
+
+	if [ -n "$GPG_URL" ]; then
+		echo "Downloading GPG signature ${GPG_FILE}..."
+		curl -s -L -O "$GPG_URL"
+	fi
+
+	if [ -n "$GPG_FILE" ]; then
+		# check if the GPG key is already imported
+		KEY_ID=$(LC_ALL=C gpg --verify "$GPG_FILE" "$CHECKSUM_FILE" 2>&1 | grep "using RSA key" | sed -e "s/.*using RSA key \([0-9A-F]\+\).*/\\1/")
+		if gpg --list-keys "$KEY_ID" >/dev/null 2>&1; then
+			echo "Verifying GPG signature..."
+			if gpg --verify "$GPG_FILE" "$CHECKSUM_FILE"; then
+				green "GPG signature OK"
+			else
+				red "GPG signature verification failed, the file might be corrupted."
+				exit 1
+			fi
+		else
+			if [ -n "$GPG_DOWNLOAD_URL" ]; then
+				echo "Downloading GPG key from ${GPG_DOWNLOAD_URL}..."
+				TEMP_KEYRING=$(mktemp --tmpdir keyring.XXXXXXXX)
+				echo "Importing GPG key from $GPG_DOWNLOAD_URL into a temporary keyring"
+				curl -s "$GPG_DOWNLOAD_URL" | gpg --no-default-keyring --keyring "$TEMP_KEYRING" --import
+
+				verify_signature_with_keyring "$TEMP_KEYRING"
+			else
+				# if the GPG key is not known then try extracting it from the RPM database
+				SHORT_KEY_ID=$(echo "$KEY_ID" | tail -c 9 | tr "[:upper:]" "[:lower:]")
+				RPM_KEY=$(rpm -qa "gpg-pubkey" | grep "gpg-pubkey-${SHORT_KEY_ID}") || true
+
+				if [ -n "$RPM_KEY" ]; then
+					TEMP_KEYRING=$(mktemp --tmpdir keyring.XXXXXXXX)
+					echo "Importing GPG key $RPM_KEY from the RPM database into a temporary keyring"
+					rpm -q --queryformat "%{DESCRIPTION}" "$RPM_KEY" | gpg --no-default-keyring --keyring "$TEMP_KEYRING" --import
+					verify_signature_with_keyring "$TEMP_KEYRING"
+				else
+					# the openSUSE or SUSE keys can be imported also from the GPG servers
+					if [ "$KEY_ID" = "35A2F86E29B700A4" ] || [ "$KEY_ID" = "B88B2FD43DBDC284" ] ||
+						[ "$KEY_ID" = "F74F09BC3FA1D6CE" ] || [ "$KEY_ID" = "A1BFC02BD588DC46" ]; then
+						TEMP_KEYRING=$(mktemp --tmpdir keyring.XXXXXXXX)
+						echo "Importing GPG key $KEY_ID from GPG servers into a temporary keyring"
+						gpg --no-default-keyring --keyring "$TEMP_KEYRING" --recv-keys "$KEY_ID"
+
+						verify_signature_with_keyring "$TEMP_KEYRING"
+					else
+						echo "The GPG key is not known, you have to manually import the respective public key"
+					fi
+				fi
+			fi
+		fi
+	fi
+
+	echo "Verifying SHA256 checksum..."
+	if sha256sum --status -c "$CHECKSUM_FILE"; then
+		green "SHA256 checksum OK"
+	else
+		red "SHA256 checksum does not match, broken file?"
+		exit 1
+	fi
+}
+
+IMAGE=""
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--arch)
+		ARCH="$2"
+		shift 2
+		;;
+	-h | --help)
+		print_help
+		exit 0
+		;;
+	*)
+		IMAGE="$1"
+		shift
+		;;
+	esac
+done
+
+if [ -z "$IMAGE" ]; then
+	print_list
+	exit 0
+fi
+
+# validate the architecture
+case "$ARCH" in
+x86_64 | aarch64 | s390x | ppc64le) ;;
+
+*)
+	echo "Error: Unsupported architecture: $ARCH"
+	exit 1
+	;;
+esac
+
+URL=""
+case "$IMAGE" in
+"leap-16.0-offline")
+	URL="https://download.opensuse.org/distribution/leap/16.0/offline/Leap-16.0-offline-installer-${ARCH}.install.iso"
+	;;
+"leap-16.0-online")
+	URL="https://download.opensuse.org/distribution/leap/16.0/offline/Leap-16.0-online-installer-${ARCH}.install.iso"
+	;;
+"sles-16.0-offline")
+	URL="https://download.suse.de/install/SLES-16-GM/SLES-16.0-Full-${ARCH}-GM.install.iso"
+	CHECKSUM_DOWNLOAD_URL="https://download.suse.de/install/SLES-16-GM/SHA256SUMS"
+	;;
+"sles-16.0-online")
+	URL="https://download.suse.de/install/SLES-16-GM/SLES-16.0-Online-${ARCH}-GM.install.iso"
+	CHECKSUM_DOWNLOAD_URL="https://download.suse.de/install/SLES-16-GM/SHA256SUMS"
+	;;
+sles-16.0-QU*-offline | sles-16.0-QU*-online)
+	# get QU number from $IMAGE
+	QU=$(echo "$IMAGE" | sed -E 's/sles-16.0-(QU[0-9]+)-(offline|online)/\1/')
+	TYPE=$(echo "$IMAGE" | sed -E 's/sles-16.0-(QU[0-9]+)-(offline|online)/\2/')
+	BASE_URL="https://download.suse.de/ibs/SUSE:/SLFO:/Products:/SLES:/16.0:/${QU}/product/iso/"
+
+	if [[ "$TYPE" == "offline" ]]; then
+		PATTERN="SLES-16\\\\.0-Full-${ARCH}-.*\\\\.install\\\\.iso\$"
+	else
+		PATTERN="SLES-16\\\\.0-Online-${ARCH}-.*\\\\.install\\\\.iso\$"
+	fi
+	URL="${BASE_URL}$(latest_version "$BASE_URL" "$PATTERN")"
+	;;
+"leap-16.1-beta-offline")
+	BASE_URL="https://download.opensuse.org/repositories/openSUSE:/Leap:/16.1:/ToTest/product/iso/"
+	PATTERN="Leap-16\\\\.1-offline-installer-${ARCH}-.*\\\\.install\\\\.iso\$"
+	URL="${BASE_URL}$(latest_version "$BASE_URL" "$PATTERN")"
+	;;
+"leap-16.1-beta-online")
+	BASE_URL="https://download.opensuse.org/repositories/openSUSE:/Leap:/16.1:/ToTest/product/iso/"
+	PATTERN="Leap-16\\\\.1-online-installer-${ARCH}-.*\\\\.install\\\\.iso\$"
+	URL="${BASE_URL}$(latest_version "$BASE_URL" "$PATTERN")"
+	;;
+"sles-16.1-beta-offline")
+	BASE_URL="https://download.suse.de/install/SLES-16.1-LATEST/"
+	PATTERN="SLES-16\\\\.1-Full-${ARCH}-.*\\\\.install\\\\.iso\$"
+	URL="${BASE_URL}$(latest_version "$BASE_URL" "$PATTERN")"
+	CHECKSUM_DOWNLOAD_URL="https://download.suse.de/install/SLES-16.1-LATEST/SHA256SUMS"
+	;;
+"sles-16.1-beta-online")
+	BASE_URL="https://download.suse.de/install/SLES-16.1-LATEST/"
+	PATTERN="SLES-16\\\\.1-Online-${ARCH}-.*\\\\.install\\\\.iso\$"
+	URL="${BASE_URL}$(latest_version "$BASE_URL" "$PATTERN")"
+	CHECKSUM_DOWNLOAD_URL="https://download.suse.de/install/SLES-16.1-LATEST/SHA256SUMS"
+	;;
+"devel-tw")
+	BASE_URL="https://download.opensuse.org/repositories/systemsmanagement:/Agama:/Devel/images/iso/"
+	PATTERN="${ARCH}.*Build.*\\\\.iso\$"
+	URL="${BASE_URL}$(latest_version "$BASE_URL" "$PATTERN")"
+	GPG_DOWNLOAD_URL="https://build.opensuse.org/projects/systemsmanagement:Agama:Devel/signing_keys/download?kind=gpg"
+	;;
+"devel-leap")
+	BASE_URL="https://download.opensuse.org/repositories/systemsmanagement:/Agama:/Devel/images_Leap_16.1/iso/"
+	PATTERN="${ARCH}.*Build.*\\\.iso\$"
+	URL="${BASE_URL}$(latest_version "$BASE_URL" "$PATTERN")"
+	GPG_DOWNLOAD_URL="https://build.opensuse.org/projects/systemsmanagement:Agama:Devel/signing_keys/download?kind=gpg"
+	;;
+"devel-sles")
+	BASE_URL="https://download.suse.de/ibs/Devel:/YaST:/Agama:/Head/images_SLES-16.1/iso/"
+	PATTERN="${ARCH}-.*Build.*\\\\.iso\$"
+	URL="${BASE_URL}$(latest_version "$BASE_URL" "$PATTERN")"
+	GPG_DOWNLOAD_URL="https://build.suse.de/projects/Devel:YaST:Agama:Head/signing_keys/download?kind=gpg"
+	;;
+"devel-sles-test-offline")
+	BASE_URL="https://download.suse.de/ibs/SUSE:/SLFO:/Products:/SLES:/16.1:/TEST/product/iso/"
+	PATTERN="SLES-16\\\\.1-Full-${ARCH}-.*\\\\.install\\\\.iso\$"
+	URL="${BASE_URL}$(latest_version "$BASE_URL" "$PATTERN")"
+	;;
+"devel-sles-test-online")
+	BASE_URL="https://download.suse.de/ibs/SUSE:/SLFO:/Products:/SLES:/16.1:/TEST/product/iso/"
+	PATTERN="SLES-16\\\\.1-Online-${ARCH}-.*\\\\.install\\\\.iso\$"
+	URL="${BASE_URL}$(latest_version "$BASE_URL" "$PATTERN")"
+	;;
+devel-branch-*)
+	BRANCH=${IMAGE#devel-branch-}
+	BASE_URL="https://download.opensuse.org/repositories/systemsmanagement:/Agama:/branches:/${BRANCH}/images/iso/"
+	PATTERN="${ARCH}.*Build.*\\\\.iso\$"
+	ISO_NAME=$(latest_version "$BASE_URL" "$PATTERN")
+	if [ -z "$ISO_NAME" ]; then
+		echo "Error: No ISO image found for branch '$BRANCH'"
+		exit 1
+	fi
+	URL="${BASE_URL}${ISO_NAME}"
+	GPG_DOWNLOAD_URL="https://build.opensuse.org/projects/systemsmanagement:Agama:Devel/signing_keys/download?kind=gpg"
+	;;
+*)
+	echo "Error: Unknown image name '$IMAGE'"
+	exit 1
+	;;
+esac
+
+echo "Downloading $IMAGE..."
+if command -v wget >/dev/null; then
+	# wget displays a better progress so prefer it if available
+	wget -c "$URL"
+else
+	curl -L -C - -O "$URL"
+fi
+
+verify_checksum_and_signature
